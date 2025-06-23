@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 
 from .discriminator import Discriminator
 
@@ -77,7 +78,7 @@ def compute_mae_loss(mae_pred: torch.Tensor, mae_target: torch.Tensor, mask_idx:
     return F.mse_loss(mae_pred, mae_target)
 
 
-def compute_adv_loss(discriminators: list[Discriminator], x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+def compute_adv_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
     Compute adversarial hinge loss for generator.
     Args:
@@ -96,7 +97,7 @@ def compute_adv_loss(discriminators: list[Discriminator], x_hat: torch.Tensor, x
     return loss
 
 
-def compute_feat_loss(discriminators: list[Discriminator], x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+def compute_feat_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
     Compute feature matching loss between real and fake for each discriminator.
     Args:
@@ -125,7 +126,7 @@ def compute_feat_loss(discriminators: list[Discriminator], x_hat: torch.Tensor, 
 def compute_generator_loss(
     x_hat: torch.Tensor,
     x: torch.Tensor,
-    discriminators: list[Discriminator],
+    discriminators: nn.ModuleList,
     mae_pred: torch.Tensor = None,
     mae_target: torch.Tensor = None,
     mask_idx: torch.LongTensor = None,
@@ -167,7 +168,7 @@ def compute_generator_loss(
     )
     return losses
 
-def compute_discriminator_loss(discriminators: list[Discriminator], x_real, x_fake):
+def compute_discriminator_loss(discriminators: nn.ModuleList, x_real, x_fake):
 
         loss = 0.0
         feat_loss = 0.0
