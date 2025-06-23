@@ -1,0 +1,128 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+def mask_frames(frames, mask_rate=0.6, mask_token=None):
+    """
+    Masks a fraction of the frames in the input tensor.
+    
+    Args:
+        frames (torch.Tensor): Input tensor of shape [B, T, D].
+        mask_rate (float): Fraction of frames to mask.
+        mask_token (torch.Tensor): Token to use for masking.
+        
+    Returns:
+        torch.Tensor: Tensor with masked frames.
+    """
+    B, T, D = frames.shape
+    num_mask = int(T * mask_rate)
+    num_mask = max(num_mask, 1) if mask_rate > 0 else 0
+
+    # Randomly choose mask positions   
+    perm = torch.randperm(T, device=frames.device)
+    mask_idx = perm[:num_mask].sort()[0]
+
+    # Write mask token to the selected positions
+    if mask_token is None:
+        mask_token = nn.Parameter(torch.zeros(1, D, device=frames.device))
+    
+    masked_frames = frames.clone()
+    masked_frames[:, mask_idx, :] = mask_token
+    
+    return masked_frames, mask_idx
+
+def interleave_cls_tokens(frames, window_size=2, cls_token=None):
+
+    B, T, D = frames.size()
+    w = window_size
+    
+    # Number of CLS tokens = T // w
+    rem = T % w
+
+    if rem:
+        frames = F.pad(frames, (0, 0, 0, w - rem, 0, 0), value=0)  # Pad with zeros to make T divisible by w
+        T = frames.size(1) 
+
+    n_cls = T // w
+
+    # 1) Expand CLS tokens:
+    cls_tokens = cls_token.repeat(B, n_cls, 1)  # (B, n_cls, embed_dim)
+
+    # 2) Interleave: split frames into (B, n_cls, w, D)
+    frames_ = frames.view(B, n_cls, w, D)  # (B, n_cls, w, D)
+    cls_tokens_ = cls_tokens.unsqueeze(2)  # (B, n_cls, 1, D)
+
+    interleaved = torch.cat([frames_, cls_tokens_], dim=2)  # (B, n_cls, w+1, D)
+    interleaved = interleaved.view(B, -1, D)  # (B, T + n_cls, D)
+
+    cls_positions = torch.tensor([(i + 1) * (w + 1) - 1 for i in range(n_cls)], device=frames.device).long()
+
+    return interleaved, cls_positions
+
+def interleave_mask_tokens(
+    cls_tokens: torch.Tensor,
+    window_size: int,
+    mask_token: torch.Tensor
+) -> torch.Tensor:
+    """
+    Interleave `window_size` copies of `mask_token` before each CLS token.
+
+    Args:
+        cls_tokens: Tensor of shape (B, n_cls, D)
+        window_size: number of mask tokens to insert before each CLS
+        mask_token: Tensor of shape (D,) or (1, D) or (B, 1, D)
+
+    Returns:
+        Tensor of shape (B, (window_size + 1) * n_cls, D)
+    """
+    B, n_cls, D = cls_tokens.shape
+
+    # Prepare mask block of shape (B, n_cls, window_size, D)
+    # Handle mask_token shapes
+    mt = mask_token
+    if mt.dim() == 1:                        # (D,)
+        mt = mt.view(1, 1, D)
+    if mt.shape == (1, D):                  # (1, D)
+        mt = mt.unsqueeze(0)                # → (1, 1, D)
+    if mt.shape == (1, 1, D):
+        mt = mt.expand(B, n_cls, D)         # → (B, n_cls, D)
+    if mt.shape == (B, 1, D):
+        mt = mt.expand(B, n_cls, D)         # → (B, n_cls, D)
+    else:
+        # if it's already (B, n_cls, D), ok
+        assert mt.shape == (B, n_cls, D), "mask_token must broadcast to (B, n_cls, D)"
+
+    # Now expand to window_size
+    mask_block = mt.unsqueeze(2).expand(B, n_cls, window_size, D)
+    cls_block  = cls_tokens.unsqueeze(2)           # (B, n_cls, 1, D)
+
+    # Concatenate [ masks..., CLS ] for each of the n_cls groups
+    interleaved = torch.cat([mask_block, cls_block], dim=2)  # (B, n_cls, window_size+1, D)
+
+    # Flatten the groups into one sequence
+    B, n_cls, grp, D = interleaved.shape  # grp == window_size+1
+    return interleaved.reshape(B, n_cls * grp, D)
+
+
+
+def retrieve_cls_tokens(x, cls_positions):
+    """
+    Retrieves the CLS tokens from the interleaved tensor.
+    
+    Args:
+        x (torch.Tensor): Interleaved tensor of shape [B, T + n_cls, D].
+        cls_positions (list): List of positions of CLS tokens.
+        
+    Returns:
+        torch.Tensor: Tensor containing only the CLS tokens.
+    """
+    B, T, D = x.size()
+
+    cls_tokens = x[:, cls_positions, :]  # [B, n_cls, D]
+    
+    all_idx = torch.arange(T, device=x.device)
+    frames_idx = all_idx[torch.isin(all_idx, cls_positions, invert=True)]
+    frames = x[:, frames_idx, :]  # [B, T_frames, D]
+
+    return cls_tokens, frames
+
