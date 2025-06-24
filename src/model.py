@@ -42,10 +42,12 @@ class ALMTokenizer(nn.Module):
         unpatchify_args: dict,
         from_raw_audio: bool = False,
         window_size: int = 8,
+        device="cuda"
     ):
         super().__init__()
         self.from_raw_audio = from_raw_audio
         self.window_size = window_size
+        self.device = device
         
         self.patchify = Patchify(**patchify_args)
         self.unpatchify = Unpatchify(**unpatchify_args)
@@ -57,9 +59,63 @@ class ALMTokenizer(nn.Module):
         self.mae_decoder = QueryDecoder(**mae_decoder_args)
 
         self.pos_encoder = PositionalEncoding(encoder_args["embed_dim"])
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, encoder_args["embed_dim"]))
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, encoder_args["embed_dim"]))
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, encoder_args["embed_dim"]), requires_grad=True)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, encoder_args["embed_dim"]), requires_grad=True)
 
+    def encoder(self, x: torch.Tensor, mask_rate: float = 0.25, w: int = None) -> torch.Tensor:
+        """
+        Returns the encoder part of the model.
+        """
+
+        if self.from_raw_audio:
+            frames = self.patchify.encode(x)  # (B, T_frames, encoder_dim)
+
+        else:
+            frames = x
+
+        frames = frames.permute(0, 2, 1)  # (B, D, T) for Transformer compatibility
+        
+        B, T, D = frames.shape
+
+        # Interleave CLS tokens
+        cls_frames, cls_positions = interleave_cls_tokens(frames, 
+                                       cls_token=self.cls_token,
+                                       window_size=self.window_size) 
+        
+        # Encoder
+        enc_out = self.query_encoder(cls_frames)  # (B, T + n_cls, D)
+
+        # Retrieve CLS tokens
+        h, _ = retrieve_cls_tokens(enc_out, cls_positions=cls_positions)
+
+        return h, cls_frames, enc_out
+    
+    def decoder(self, h: torch.Tensor, x: torch.Tensor, enc_out: torch.Tensor, cls_positions) -> torch.Tensor:
+        """
+        Returns the decoder part of the model.
+        """
+        # Interleave mask tokens before each CLS token
+        cls_and_mask = interleave_mask_tokens(
+            h, 
+            window_size=self.window_size, 
+            mask_token=self.mask_token
+        )
+
+        # Decode masked frames
+        dec_out = self.query_decoder(cls_and_mask, enc_out)
+
+        # Remove CLS tokens
+        _, dec_out = retrieve_cls_tokens(dec_out, cls_positions=cls_positions)
+
+
+        # Unpatchify
+        x_hat = self.unpatchify.decode(dec_out.permute(0, 2, 1))  # (B, 1, N_samples)
+
+        # Trim for wrong frame count caused by encodec
+        if x_hat.size(2) > x.size(2):
+            x_hat = x_hat[:, :, :x.size(2)]
+        
+        return x_hat
 
 
     def forward(
@@ -73,8 +129,8 @@ class ALMTokenizer(nn.Module):
         """
 
         if self.from_raw_audio:
-            frames = self.patchify.encode(x.to(self.patchify.device))  # (B, T_frames, encoder_dim)
-            frames = frames.to("cuda")  # Ensure x is on the same device as patchify
+            frames = self.patchify.encode(x)  # (B, T_frames, encoder_dim)
+
         else:
             frames = x
 
@@ -84,14 +140,16 @@ class ALMTokenizer(nn.Module):
 
         # Interleave CLS tokens
         cls_frames, cls_positions = interleave_cls_tokens(frames, 
-                                       window_size=self.window_size, 
-                                       cls_token=self.query_encoder.cls_token)
+                                       cls_token=self.cls_token,
+                                       window_size=self.window_size) 
         
         # Encoder
         enc_out = self.query_encoder(cls_frames)  # (B, T + n_cls, D)
 
         # Retrieve CLS tokens
         h, _ = retrieve_cls_tokens(enc_out, cls_positions=cls_positions)
+
+        # print("CLS tokens", h)
 
         # Interleave mask tokens before each CLS token
         cls_and_mask = interleave_mask_tokens(
@@ -101,15 +159,14 @@ class ALMTokenizer(nn.Module):
         )
 
         # Decode masked frames
-        dec_out = self.query_decoder(cls_and_mask, cls_frames)
+        dec_out = self.query_decoder(cls_and_mask, enc_out)
 
         # Remove CLS tokens
         _, dec_out = retrieve_cls_tokens(dec_out, cls_positions=cls_positions)
 
 
         # Unpatchify
-        x_hat = self.unpatchify.decode(dec_out.permute(0, 2, 1).to(self.unpatchify.device))  # (B, 1, N_samples)
-        x_hat = x_hat.to(x.device)  # Ensure x_hat is on the same device as x
+        x_hat = self.unpatchify.decode(dec_out.permute(0, 2, 1)) # (B, 1, N_samples)
 
         # Trim for wrong frame count caused by encodec
         if x_hat.size(2) > x.size(2):
@@ -120,7 +177,7 @@ class ALMTokenizer(nn.Module):
             masked_frames, masked_idx = mask_frames(frames, mask_rate=0.3, mask_token=self.mask_token)
 
             # Encoder
-            mae_enc_out = self.query_encoder(masked_frames)  # (B, T, D)
+            mae_enc_out = self.mae_encoder(masked_frames)  # (B, T, D)
             
             # Decoder
             mae_dec_out = self.mae_decoder(mae_enc_out, frames)
