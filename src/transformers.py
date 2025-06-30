@@ -3,11 +3,7 @@ import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, TransformerDecoder, TransformerDecoderLayer
 
-#
-# ──────────────────────────────────────────────────────────────────────────
-#    1. POSITIONAL ENCODING (SINUSOIDAL)
-# ──────────────────────────────────────────────────────────────────────────
-#
+
 class PositionalEncoding(nn.Module):
     """
     Standard sinusoidal positional encoding.
@@ -15,6 +11,7 @@ class PositionalEncoding(nn.Module):
 
     def __init__(self, d_model: int, max_len: int = 10_000):
         super().__init__()
+        self.d_model = d_model
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float32).unsqueeze(1)
         div_term = torch.exp(
@@ -33,11 +30,6 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, :seq_len, :]
 
 
-#
-# ──────────────────────────────────────────────────────────────────────────
-#    2. QUERY‐BASED TRANSFORMER ENCODER
-# ──────────────────────────────────────────────────────────────────────────
-#
 class QueryEncoder(nn.Module):
     """
     Query‐based Transformer Encoder (interleaved CLS tokens).
@@ -46,14 +38,13 @@ class QueryEncoder(nn.Module):
     - window_size: interval at which to insert a CLS token
     """
 
-    def __init__(self, embed_dim: int = 128, n_heads: int = 8, n_layers: int = 6, window_size: int = 6):
+    def __init__(self, embed_dim: int = 128, n_heads: int = 8, n_layers: int = 6, sliding_window_size: int = 64, dim_feedforward: int = 512):
         super().__init__()
         self.embed_dim = embed_dim
-        self.window_size = window_size
-        encoder_layer = TransformerEncoderLayer(d_model=embed_dim, nhead=n_heads)
+        self.sliding_window_size = sliding_window_size
+        encoder_layer = TransformerEncoderLayer(d_model=embed_dim, nhead=n_heads, batch_first=True, dim_feedforward=dim_feedforward)
         self.transformer = TransformerEncoder(encoder_layer, num_layers=n_layers)
-        # Learnable CLS token
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+
         # Positional encoding
         self.pos_encoder = PositionalEncoding(embed_dim)
 
@@ -63,20 +54,26 @@ class QueryEncoder(nn.Module):
         returns: h: (batch, T_cls, embed_dim)  -- the retrieved CLS tokens
         """
      
-        # 3) Add positional encoding
+        # 1) Add positional encoding
         x = self.pos_encoder(frames)  # (B, T + n_cls, D)
+        B, T, D = x.size()
 
-        # 4) Transformer expects (S, B, D)
-        x = self.transformer(x)  # (T + n_cls, B, D)
+        # 2) Build sliding‐window causal mask of shape (S, S)
+        #    allow positions j where i - sliding_window_size < j <= i
+        idxs = torch.arange(T, device=x.device)
+        i = idxs[:, None]  # (S,1)
+        j = idxs[None, :]  # (1,S)
+        allowed = (j <= i) & ((i - j) < self.sliding_window_size)
+
+        # PyTorch Transformer expects an additive mask: float with -inf at masked locations
+        mask = torch.zeros((T, T), device=x.device, dtype=x.dtype)
+        mask[~allowed] = float('-inf')
+
+        # 3) Run through Transformer with our custom mask
+        x = self.transformer(x, mask=mask)
 
         return x
-    
 
-#
-# ──────────────────────────────────────────────────────────────────────────
-#    4. QUERY‐BASED TRANSFORMER DECODER
-# ──────────────────────────────────────────────────────────────────────────
-#
 class QueryDecoder(nn.Module):
     """
     Query‐based Transformer Decoder (interleaved mask tokens).
@@ -85,27 +82,24 @@ class QueryDecoder(nn.Module):
     - window_size: how many mask tokens per CLS token
     """
 
-    def __init__(self, embed_dim: int = 512, n_heads: int = 8, n_layers: int = 6, window_size: int = 6):
+    def __init__(self, embed_dim: int = 512, n_heads: int = 8, n_layers: int = 6, dim_feedforward: int = 512):
         super().__init__()
         self.embed_dim = embed_dim
-        self.window_size = window_size
-        decoder_layer = TransformerDecoderLayer(d_model=embed_dim, nhead=n_heads)
+        decoder_layer = TransformerDecoderLayer(d_model=embed_dim, nhead=n_heads, batch_first=True, dim_feedforward=dim_feedforward)
         self.transformer = TransformerDecoder(decoder_layer, num_layers=n_layers)
-        # Learnable mask token
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+
         # Positional encoding
         self.pos_decoder = PositionalEncoding(embed_dim)
 
     def forward(self, x: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
-        quantized_h: (batch, T_cls, embed_dim)
+        frames: (batch, T_frames, embed_dim)
         returns: (batch, T_expanded, embed_dim)  -- to be reassembled and fed into UnPatchify
         """
 
-        # 3) Positional encoding + TransformerDecoder
+        # Positional encoding + TransformerDecoder
         x = self.pos_decoder(x)  # (B, T_expanded, D)
-
-        out = self.transformer(x, target)  # (T_expanded, B, D)
+        out = self.transformer(x, target)  
 
         return out
 
