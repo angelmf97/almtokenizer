@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-class Discriminator(nn.Module):
+class Discriminator2(nn.Module):
     """
     Single‐scale discriminator (blocks of Conv1d + LeakyReLU).
     You would typically instantiate several with different hop lengths.
@@ -50,4 +50,68 @@ class Discriminator(nn.Module):
             # collect activations right after each Conv1d
             if isinstance(layer, nn.Conv1d):
                 feats.append(out)
+        return feats
+
+
+class ResBlock2d(nn.Module):
+    def __init__(self, in_ch, out_ch, kernel_size=3, stride=2, leaky_slope=0.2):
+        super().__init__()
+        pad = kernel_size // 2
+        # main path
+        self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size, stride=1, padding=pad)
+        self.lrelu = nn.LeakyReLU(leaky_slope)
+        self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size, stride=stride, padding=pad)
+        # skip connection to match shape
+        self.skip = nn.Conv2d(in_ch, out_ch, kernel_size=1, stride=stride)
+    def forward(self, x):
+        identity = self.skip(x)
+        out = self.conv1(x)
+        out = self.lrelu(out)
+        out = self.conv2(out)
+        return self.lrelu(out + identity)
+    
+
+class Discriminator(nn.Module):
+    """
+    Single‐scale 2D residual discriminator head.
+    Stacks `n_blocks` of ResBlock2d, all with the same `hidden_dim`.
+    """
+    def __init__(
+        self,
+        in_channels: int,
+        hidden_dim: int,
+        n_blocks: int,
+        block_cls: nn.Module = ResBlock2d,
+        mel_transform: nn.Module = None
+    ):
+        super().__init__()
+        assert mel_transform is not None, "Provide a MelLogMel instance"
+        self.mel_transform = mel_transform
+
+        layers = []
+        ch = in_channels
+        for _ in range(n_blocks):
+            layers.append(block_cls(ch, hidden_dim, kernel_size=3, stride=2))
+            ch = hidden_dim
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, 1, N) or (B, N) waveform
+        returns: flattened logits/features
+        """
+        spec = self.mel_transform(x)       # → (B, 2, n_mels, T)
+        out = self.net(spec)               # → (B, hidden_dim, H, W)
+        return out.flatten(1)              # → (B, hidden_dim * H * W)
+
+    def get_features(self, x: torch.Tensor):
+        """
+        Return intermediate feature-maps after each ResBlock2d.
+        """
+        feats = []
+        spec = self.mel_transform(x)
+        out = spec
+        for layer in self.net:
+            out = layer(out)
+            feats.append(out)
         return feats
