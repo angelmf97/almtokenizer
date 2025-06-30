@@ -100,12 +100,13 @@ class FSDKaggle2018Dataset(Dataset):
             and returns a transformed version.
     """
 
-    def __init__(self, root_dir, split='train', sample_rate=24000, transform=None):
+    def __init__(self, root_dir, split='train', sample_rate=24000, maxdur=1, transform=None):
         assert split in ('train', 'test', 'all'), \
             f"split must be 'train', 'test', or 'all', got {split}"
         self.root_dir = root_dir
         self.split = split
         self.sample_rate = sample_rate
+        self.maxdur = maxdur  # Maximum duration in seconds for audio clips
         self.transform = transform
 
         # Collect all .wav file paths according to split
@@ -218,7 +219,7 @@ def collate_fn_codes(batch):
 
     return padded_codes
 
-def collate_fn_audio(batch):
+def collate_fn_audio(batch, nsecs=1):
     """
     Collate function to pad a batch of waveforms to the same length.
 
@@ -241,8 +242,8 @@ def collate_fn_audio(batch):
     # Determine original lengths and max length
     lengths = torch.tensor([w.shape[1] for w in waveforms], dtype=torch.long)
     max_length = lengths.max().item()
-    if max_length > 24000*5:
-        max_length = 24000*5
+    if max_length > 24000 * nsecs:  # 24000 samples per second
+        max_length = 24000 * nsecs
 
     # Assume all waveforms have the same number of channels
     channels = waveforms[0].shape[0]
@@ -253,7 +254,191 @@ def collate_fn_audio(batch):
 
     # Copy each waveform into the padded tensor
     for i, c in enumerate(waveforms):
-        length = min(c.shape[1], 24000*1)
-        padded_waveforms[i, :, :length] = c[:, :length]
+        length = min(c.shape[1], max_length)
+        segment = c[:, :length]
+        max_amp = segment.abs().max()
+        segment_norm = segment / max_amp
+        padded_waveforms[i, :, :length] = segment_norm
 
     return padded_waveforms
+
+
+from typing import Any, Dict, List, Optional
+import sqlite3
+
+class GoodSoundsDataset(Dataset):
+    """
+    PyTorch Dataset for the Good-Sounds Dataset.
+
+    Args:
+        root_dir (str): Path to the 'good_sounds_dataset' directory.
+        db_filename (str): Name of the SQLite database file (default: 'good_sounds.db').
+        table (str): Which table to load: 'sounds', 'takes', 'packs', or 'ratings'.
+        transforms (callable, optional): Optional audio transforms to apply.
+        filter_conditions (str, optional): SQL WHERE clause to filter records (e.g. "instrument='violin'").
+    """
+
+    def __init__(
+        self,
+        root_dir: str,
+        db_filename: str = 'good_sounds.db',
+        transforms: Optional[Any] = None,
+        filter_conditions: Optional[str] = None,
+        sample_rate: int = 24000
+    ):
+        self.root_dir = root_dir
+        self.db_path = os.path.join(root_dir, db_filename)
+        self.transforms = transforms
+        self.filter_conditions = filter_conditions
+        self.sample_rate = sample_rate
+
+        # Connect to the SQLite database
+        self.conn = sqlite3.connect(self.db_path)
+        self.conn.row_factory = sqlite3.Row  # access columns by name
+        self.cursor = self.conn.cursor()
+
+
+        # Load metadata by joining sounds and takes to get file paths
+        query = '''
+        SELECT s.id as sound_id,
+               t.id as take_id,
+               s.instrument,
+               s.note,
+               s.octave,
+               s.dynamics,
+               s.klass,
+               t.filename
+        FROM sounds s
+        JOIN takes t ON s.id = t.sound_id
+        '''
+        if self.filter_conditions:
+            query += f" WHERE {self.filter_conditions}"
+
+        self.cursor.execute(query)
+        rows = self.cursor.fetchall()
+        if not rows:
+            raise ValueError("No records found. Check your root_dir, db_filename, or filter_conditions.")
+
+        # Build a list of metadata dicts
+        self.records: List[Dict[str, Any]] = []
+        for row in rows:
+            file_path = os.path.join(root_dir, "good-sounds", row['filename'])
+            if not os.path.isfile(file_path):
+                raise FileNotFoundError(f"Audio file not found: {file_path}")
+            self.records.append({
+                'sound_id': row['sound_id'],
+                'take_id': row['take_id'],
+                'instrument': row['instrument'],
+                'note': row['note'],
+                'octave': row['octave'],
+                'dynamics': row['dynamics'],
+                'klass': row['klass'],
+                'file_path': file_path
+            })
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        record = self.records[idx]
+
+        # Load the audio file (waveform shape: [channels, time])
+        waveform, sample_rate = torchaudio.load(record['file_path'])
+
+        # Convert to mono if needed
+        if waveform.size(0) > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        # Resample if needed (optional, can be done in transforms)
+        if sample_rate != self.sample_rate:  # Example target sample rate
+            waveform = torchaudio.functional.resample(
+                waveform, orig_freq=sample_rate, new_freq=24000
+            )
+
+        # Apply transforms if any
+        if self.transforms:
+            waveform = self.transforms(waveform)
+
+        return {
+            'waveform': waveform,
+            'sample_rate': sample_rate,
+            'instrument': record['instrument'],
+            'note': record['note'],
+            'octave': record['octave'],
+            'dynamics': record['dynamics'],
+            'sound_id': record['sound_id'],
+            'take_id': record['take_id'],
+            'klass': record['klass'],
+        }
+    
+import math
+from tqdm import tqdm
+class FSDKaggle2018Dataset2(Dataset):
+    """
+    PyTorch Dataset para FSDKaggle2018 que:
+      - Divide los audios >1 s en segmentos consecutivos de 1 s.
+      - Padece con ceros los audios <1 s para que todos midan exactamente 1 s.
+    """
+
+    def __init__(self, root_dir, split='train', sample_rate=24000, maxdur=1.0, transform=None):
+        assert split in ('train', 'test', 'all'), "split debe ser 'train', 'test' o 'all'"
+        self.sample_rate = sample_rate
+        self.maxdur = maxdur
+        self.transform = transform
+
+        # Recolectar rutas de archivos según el split
+        file_paths = []
+        if split in ('train', 'all'):
+            file_paths += glob.glob(os.path.join(root_dir, 'FSDKaggle2018.audio_train', '*.wav'))
+        if split in ('test', 'all'):
+            file_paths += glob.glob(os.path.join(root_dir, 'FSDKaggle2018.audio_test',  '*.wav'))
+        if not file_paths:
+            raise RuntimeError(f"No se encontraron archivos WAV en split={split} bajo {root_dir}")
+
+        # Construir lista de segmentos (filepath, start_frame)
+        self.segments = []
+        segment_length = int(self.sample_rate * self.maxdur)
+        for fp in tqdm(file_paths):
+            info = torchaudio.info(fp)  # AudioMetaData con num_frames, sample_rate, etc. :contentReference[oaicite:0]{index=0}
+            num_frames = info.num_frames
+            n_segs = math.ceil(num_frames / segment_length)
+            for i in range(n_segs):
+                start = i * segment_length
+                self.segments.append((fp, start))
+
+    def __len__(self):
+        return len(self.segments)
+
+    def __getitem__(self, idx):
+        filepath, start_frame = self.segments[idx]
+        segment_length = int(self.sample_rate * self.maxdur)
+
+        # Cargar solo el segmento deseado :contentReference[oaicite:1]{index=1}
+        waveform, sr = torchaudio.load(
+            filepath,
+            frame_offset=start_frame,
+            num_frames=segment_length
+        )
+
+        # Mono
+        if waveform.size(0) > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        # Resample si hace falta
+        if sr != self.sample_rate:
+            waveform = torchaudio.functional.resample(
+                waveform, orig_freq=sr, new_freq=self.sample_rate
+            )
+
+        # Padding a la derecha si el segmento es más corto :contentReference[oaicite:2]{index=2}
+        cur_len = waveform.size(1)
+        if cur_len < segment_length:
+            pad_amt = segment_length - cur_len
+            waveform = torch.nn.functional.pad(waveform, (0, pad_amt))
+
+        # Transformaciones de usuario
+        if self.transform:
+            waveform = self.transform(waveform)
+
+        return waveform, self.sample_rate, filepath
