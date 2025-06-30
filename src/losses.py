@@ -75,6 +75,7 @@ def compute_mae_loss(mae_pred: torch.Tensor, mae_target: torch.Tensor, mask_idx:
     Returns:
         Tensor scalar of MSE loss over masked positions.
     """
+    # Normalize predictions and targets
     return F.mse_loss(mae_pred, mae_target)
 
 
@@ -89,12 +90,13 @@ def compute_adv_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torc
         Tensor scalar of adversarial loss (sum over discriminators).
     """
     loss = 0.0
+    K = len(discriminators)
     for D in discriminators:
 
-        fake_logits = D(x_hat.detach())
+        fake_logits = D(x_hat)
         # hinge loss: E[max(0, 1 - D(x_hat))]
         loss += torch.mean(F.relu(1.0 - fake_logits))
-    return loss
+    return loss / K
 
 
 def compute_feat_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -127,10 +129,10 @@ def compute_generator_loss(
     x_hat: torch.Tensor,
     x: torch.Tensor,
     discriminators: nn.ModuleList,
+    lambdas: dict[str, float],
     mae_pred: torch.Tensor = None,
     mae_target: torch.Tensor = None,
     mask_idx: torch.LongTensor = None,
-    lambda_mae: float = .5
 ) -> dict[str, torch.Tensor]:
     """
     Compute all generator losses and return dictionary.
@@ -146,16 +148,16 @@ def compute_generator_loss(
     """
     losses = {}
     # Reconstruction
-    losses['L_time'] = compute_time_loss(x_hat, x)
-    losses['L_freq'] = compute_freq_loss(x_hat, x)
+    losses['L_time'] = lambdas["L_time"] * compute_time_loss(x_hat, x)
+    losses['L_freq'] = lambdas["L_freq"] * compute_freq_loss(x_hat, x)
 
     # Adversarial
-    losses['L_adv']  = compute_adv_loss(discriminators, x_hat, x)
-    losses['L_feat'] = compute_feat_loss(discriminators, x_hat, x)
+    losses['L_adv']  = lambdas["L_adv"] * compute_adv_loss(discriminators, x_hat, x)
+    losses['L_feat'] = lambdas["L_feat"] * compute_feat_loss(discriminators, x_hat, x)
 
     # MAE
     if mae_pred is not None and mae_target is not None and mask_idx is not None:
-        losses['L_mae'] = compute_mae_loss(mae_pred, mae_target, mask_idx)
+        losses['L_mae'] = lambdas["L_mae"] * compute_mae_loss(mae_pred, mae_target, mask_idx)
     else:
         losses['L_mae'] = torch.tensor(0.0, device=x.device)
     # Total
@@ -164,7 +166,7 @@ def compute_generator_loss(
         losses['L_freq'] +
         losses['L_adv']  +
         losses['L_feat'] +
-        lambda_mae * losses['L_mae']
+        losses['L_mae']
     )
     return losses
 
@@ -172,7 +174,10 @@ def compute_discriminator_loss(discriminators: nn.ModuleList, x_real, x_fake):
 
         loss = 0.0
         feat_loss = 0.0
-        K    = len(discriminators)
+        try:
+            K = len(discriminators)
+        except TypeError:
+            K = discriminators.num_discriminators
         for D in discriminators:
 
             # Hinge loss
@@ -180,3 +185,35 @@ def compute_discriminator_loss(discriminators: nn.ModuleList, x_real, x_fake):
                 + F.relu(1.0 + D(x_fake)).mean())
         
         return loss / K
+
+
+def compute_discriminator_loss_fb(
+    ms_stft_discriminator: torch.nn.Module,
+    x_real: torch.Tensor,
+    x_fake: torch.Tensor
+) -> torch.Tensor:
+    """
+    Calcula la pérdida del discriminador usando hinge loss multiescala.
+
+    Args:
+        ms_stft_discriminator: discriminador MS-STFT.
+        x_real: tensor de audio real, shape [B, 1, T].
+        x_fake: tensor de audio generado, shape [B, 1, T].
+
+    Returns:
+        loss: escalar con la pérdida promedio sobre todos los discriminadores.
+    """
+    # Pasada por los discriminadores
+    logits_real, _ = ms_stft_discriminator(x_real)
+    logits_fake, _ = ms_stft_discriminator(x_fake.detach())
+
+    # Acumulamos la pérdida
+    loss_D = 0.0
+    K = len(logits_real)
+    for D_real_k, D_fake_k in zip(logits_real, logits_fake):
+        # hinge loss: real --> max(0, 1 - D(x)), fake --> max(0, 1 + D(x̂))
+        loss_real_k = F.relu(1.0 - D_real_k).mean()
+        loss_fake_k = F.relu(1.0 + D_fake_k).mean()
+        loss_D += (loss_real_k + loss_fake_k)
+
+    return loss_D / K
