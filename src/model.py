@@ -59,7 +59,7 @@ class ALMTokenizer(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, encoder_args["embed_dim"]), requires_grad=True)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, encoder_args["embed_dim"]), requires_grad=True)
 
-    def encode(self, x: torch.Tensor, w: int = None) -> torch.Tensor:
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
         """
         Returns the encoder part of the model.
         """
@@ -239,8 +239,8 @@ class ALMTokenizer(nn.Module):
         """
 
         # Ensure output directories exist
-        os.makedirs(writer_dir, exist_ok=True)
-        os.makedirs(checkpoint_dir, exist_ok=True)
+        os.makedirs(writer_dir, exist_ok=False)
+        os.makedirs(checkpoint_dir, exist_ok=False)
 
         # TensorBoard writer for logging
         writer = SummaryWriter(log_dir="runs/alm_tokenizer")
