@@ -13,14 +13,14 @@ model:
   # common args for both encoder & decoder
   base_args:
     embed_dim: 128  # common embedding dimension for EnCodec: 128
-    n_heads: 8
-    n_layers: 6
+    n_heads: 64
+    n_layers: 24
     dim_feedforward: 512
 
   mae_args:
     embed_dim: 128 # common embedding dimension for EnCodec: 128
     n_heads: 8
-    n_layers: 4
+    n_layers: 6
     dim_feedforward: 512
 
   # if you want to freeze patchify/unpatchify
@@ -38,9 +38,9 @@ model:
 ###################################
 
 discriminator:
-  hop_lengths: [128, 256] #[32, 64, 128, 256, 512, 1024]
-  n_fft: [512, 1024] #[128, 256, 512, 1024, 2048, 2048]
-  win_lengths: [512, 1024] #[128, 256, 512, 1024, 2048, 2048]
+  hop_lengths: [32, 64, 128, 256, 512, 1024]
+  n_fft: [128, 256, 512, 1024, 2048, 2048]
+  win_lengths: [128, 256, 512, 1024, 2048, 2048]
   n_mels: 64
 
 
@@ -49,7 +49,7 @@ discriminator:
 ################################
 
 dataloader:
-  dataset_path: "../4060432"  # path to the dataset directory
+  dataset_path: ""  # PATH TO THE DATASET DIRECTORY
   batch_size: 64
   train_subset_size: null # set to null to use the full dataset
   test_subset_size: null # set to null to use the full dataset
