@@ -28,6 +28,7 @@ The window size (separation between CLS tokens) changes randomly for each batch,
 
 Most important parameters to check in the config:
 
+```
 model:
     base_args:
         **n_heads:** number of attention heads of the transformer encoder and decoder. In the original implementation they use 64 (probably beyond our limitations).
@@ -59,3 +60,5 @@ training:
     lr_generator: learning rate of the generator.
     lr_discriminator: learning rate of the discriminator.
     lambdas: factors multiplying each term of the compound loss function of the generator.
+
+```
