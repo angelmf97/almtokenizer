@@ -327,7 +327,6 @@ class ALMTokenizer(nn.Module):
                 
                 total_gen_loss = all_losses["L_total"]
 
-                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 # Backpropagation for generator
                 optim_g.zero_grad()
                 total_gen_loss.backward()
