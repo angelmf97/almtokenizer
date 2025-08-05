@@ -1,3 +1,5 @@
+### THIS IS A LEGACY FILE OF THE SOUNDSTREAM DISCRIMINATOR USED PREVIOUSLY ###
+
 import torch
 import torch.nn as nn
 

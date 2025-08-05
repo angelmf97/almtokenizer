@@ -10,7 +10,7 @@ class Patchify:
         parameters: List of encoder parameters.
         device: The device (CPU or CUDA) to run the encoder on.
     """
-    def __init__(self, device: str, model_name="encodec_24khz"):
+    def __init__(self, device: str, requires_grad: bool = False, model_name="encodec_24khz"):
         """
         Initializes the Patchify class by loading the Encodec encoder and moving it to the specified device.
 
@@ -29,6 +29,9 @@ class Patchify:
         self.parameters = list(self.encoder.parameters())
         self.device = device
         self.encoder.to(device)
+        # Set requires_grad for the parameters
+        for param in self.parameters:
+            param.requires_grad = requires_grad
 
     def encode(self, wavs):
         """

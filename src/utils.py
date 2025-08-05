@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def mask_frames(frames, mask_rate=0.6, mask_token=None):
+def mask_frames(frames, mask_rate=0.3, mask_token=None):
     """
     Masks a fraction of the frames in the input tensor.
     
@@ -31,7 +31,7 @@ def mask_frames(frames, mask_rate=0.6, mask_token=None):
     
     return masked_frames, mask_idx
 
-def interleave_cls_tokens(frames, window_size=2, cls_token=None):
+def interleave_cls_tokens(frames, cls_token: torch.Tensor, window_size=2):
 
     B, T, D = frames.size()
     w = window_size
@@ -126,3 +126,46 @@ def retrieve_cls_tokens(x, cls_positions):
 
     return cls_tokens, frames
 
+
+import torchaudio.transforms as T
+
+class MelLogMel(nn.Module):
+    """
+    Compute mel- and log-mel- spectrograms and stack them as two channels.
+    """
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        n_fft: int = 1024,
+        hop_length: int = 128,
+        win_length: int = 1024,
+        n_mels: int = 128,
+        top_db: float = 80.0,
+    ):
+        super().__init__()
+        # Mel spectrogram: power spectrogram -> mel bins
+        self.mel_spec = T.MelSpectrogram(
+            sample_rate=sample_rate,
+            n_fft=n_fft,
+            win_length=win_length,
+            hop_length=hop_length,
+            n_mels=n_mels,
+            power=2.0,                # power spectrogram
+        )
+        # Convert power spectrogram to decibels
+        self.to_db = T.AmplitudeToDB(stype="power", top_db=top_db)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, 1, N) or (B, N) waveform in [-1, 1]
+        returns: (B, 2, n_mels, T) where channel 0 = mel, 1 = log-mel
+        """
+        # collapse channel if present
+        if x.dim() == 3 and x.size(1) == 1:
+            x = x.squeeze(1)  # -> (B, N)
+        # compute mel
+        mel = self.mel_spec(x)       # (B, n_mels, T)
+        log_mel = self.to_db(mel)    # (B, n_mels, T)
+        # stack as two-channel feature
+        return torch.stack([mel, log_mel], dim=1)

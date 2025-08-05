@@ -431,7 +431,7 @@ class FSDKaggle2018Dataset2(Dataset):
                 waveform, orig_freq=sr, new_freq=self.sample_rate
             )
 
-        # Padding a la derecha si el segmento es más corto :contentReference[oaicite:2]{index=2}
+        # Padding a la derecha si el segmento es más corto
         cur_len = waveform.size(1)
         if cur_len < segment_length:
             pad_amt = segment_length - cur_len
@@ -440,5 +440,81 @@ class FSDKaggle2018Dataset2(Dataset):
         # Transformaciones de usuario
         if self.transform:
             waveform = self.transform(waveform)
+
+        return waveform, self.sample_rate, filepath
+
+
+class FSD50K(Dataset):
+    """
+    PyTorch Dataset for the FSDKaggle2018 audio dataset.
+
+    This dataset expects a directory structure like:
+        root_dir/
+            FSDKaggle2018.audio_train/
+                *.wav
+            FSDKaggle2018.audio_test/
+                *.wav
+
+    Args:
+        root_dir (str): Path to the dataset directory containing the two subfolders.
+        split (str): One of 'train', 'test', or 'all'. Controls which subset to load.
+        sample_rate (int): Target sample rate. Audio will be resampled to this rate if different.
+        transform (callable, optional): A function/transform that takes in a waveform Tensor
+            and returns a transformed version.
+    """
+
+    def __init__(self, root_dir, split='train', sample_rate=24000, transform=None):
+        assert split in ('train', 'test', 'all'), \
+            f"split must be 'train', 'test', or 'all', got {split}"
+        self.root_dir = root_dir
+        self.split = split
+        self.sample_rate = sample_rate
+        self.transform = transform
+
+        # Collect all .wav file paths according to split
+        self.file_paths = []
+        if split in ('train', 'all'):
+            train_pattern = os.path.join(root_dir, 'FSD50K.dev_audio', '*.wav')
+            self.file_paths.extend(glob.glob(train_pattern))
+        if split in ('test', 'all'):
+            test_pattern = os.path.join(root_dir, 'FSD50K.eval_audio', '*.wav')
+            self.file_paths.extend(glob.glob(test_pattern))
+
+        if not self.file_paths:
+            raise RuntimeError(f"No audio files found for split='{split}' in {root_dir}")
+
+    def __len__(self):
+        """Return the total number of audio files in this split."""
+        return len(self.file_paths)
+
+    def __getitem__(self, idx):
+        """
+        Load the waveform at index `idx`, convert to mono, resample, and apply transform.
+
+        Returns:
+            waveform (Tensor): FloatTensor of shape [1, T] where T is number of samples.
+            sr (int): The sample rate of `waveform` (== self.sample_rate).
+            filepath (str): Full path to the original WAV file.
+        """
+        filepath = self.file_paths[idx]
+        waveform, sr = torchaudio.load(filepath)  # waveform shape: [channels, time]
+
+
+        # Convert to mono if needed
+        if waveform.size(0) > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        
+        # Resample if needed
+        if sr != self.sample_rate:
+            waveform = torchaudio.functional.resample(
+                waveform, orig_freq=sr, new_freq=self.sample_rate
+            )
+
+        # Apply user transform (e.g. augmentations, feature extraction)
+        if self.transform is not None:
+            waveform = self.transform(waveform)
+        
+        waveform = torch.nan_to_num(waveform, nan=0.0, posinf=0.0, neginf=0.0)
 
         return waveform, self.sample_rate, filepath

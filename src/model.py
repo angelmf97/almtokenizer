@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import random
 from .patchify import Patchify
 from .unpatchify import Unpatchify
 from .transformers import QueryEncoder, QueryDecoder, PositionalEncoding
@@ -9,7 +10,7 @@ from .utils import interleave_cls_tokens, retrieve_cls_tokens, interleave_mask_t
 
 from typing import Iterable
 import torch.optim as optim
-from src.losses import compute_generator_loss, compute_discriminator_loss
+from src.losses import compute_all_losses, compute_discriminator_loss
 from itertools import chain
 from typing import Optional
 import os
@@ -127,9 +128,12 @@ class ALMTokenizer(nn.Module):
         if self.from_raw_audio:
             frames = self.patchify.encode(x)  # (B, T, D)
 
+
         else:
             frames = x
 
+        self.window_size = random.randint(2, 10)
+        
         frames = frames.permute(0, 2, 1)  # (B, D, T) for Transformer compatibility
         
         B, T, D = frames.shape
@@ -167,25 +171,25 @@ class ALMTokenizer(nn.Module):
             x_hat = x_hat[:, :, :x.size(2)]
 
         # MAE training
-        if self.training:
-            masked_frames, masked_idx = mask_frames(frames, mask_rate=mask_rate, mask_token=self.mask_token)
+        #if self.training:
+        masked_frames, masked_idx = mask_frames(frames, mask_rate=mask_rate, mask_token=self.mask_token)
 
-            # Encoder
-            mae_enc_out = self.query_encoder(masked_frames)  # (B, T, D)
-            
-            # Decoder
-            mae_dec_out = self.mae_decoder(mae_enc_out, frames)
+        # Encoder
+        mae_enc_out = self.query_encoder(masked_frames)  # (B, T, D)
+        
+        # Decoder
+        mae_dec_out = self.mae_decoder(mae_enc_out, frames)
 
-            pred_frames = mae_dec_out[:, masked_idx, :]  # (B, num_masked, D)
-            original_frames = frames[:, masked_idx, :]
+        pred_frames = mae_dec_out[:, masked_idx, :]  # (B, num_masked, D)
+        original_frames = frames[:, masked_idx, :]
 
-            return {
-                "x_hat": x_hat,
-                "orig_waveform": x,
-                "mask_indices": masked_idx,
-                "mae_pred": pred_frames,
-                "mae_target": original_frames
-            }
+        return {
+            "x_hat": x_hat,
+            "orig_waveform": x,
+            "mask_indices": masked_idx,
+            "mae_pred": pred_frames,
+            "mae_target": original_frames
+        }
 
 
         return x_hat
@@ -206,12 +210,14 @@ class ALMTokenizer(nn.Module):
     def train_model(
             self,
             discriminators,
-            dl,
+            train_dl,
+            test_dl,
             lambdas: dict,
             num_epochs: int = 200,
             checkpoint_freq: int = 10,
             start_checkpoint: Optional[int] = 0,
             discriminator_train_freq: int = 30,
+            eval_freq: int = 10,
             writer_dir: str = "writer",
             checkpoint_dir: str = "checkpoints",
             lr_g: float = 1e-4,
@@ -239,11 +245,18 @@ class ALMTokenizer(nn.Module):
         """
 
         # Ensure output directories exist
-        os.makedirs(writer_dir, exist_ok=False)
-        os.makedirs(checkpoint_dir, exist_ok=False)
+        os.makedirs(writer_dir, exist_ok=True)
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        model_dir = os.path.join(checkpoint_dir, "model")
+        os.makedirs(model_dir, exist_ok=True)
+        
+        discriminator_dir = os.path.join(checkpoint_dir, "discriminator")
+        os.makedirs(discriminator_dir, exist_ok=True)
+
 
         # TensorBoard writer for logging
-        writer = SummaryWriter(log_dir="runs/alm_tokenizer")
+        writer = SummaryWriter(log_dir=writer_dir)
 
         # Optimizer for generator (the ALMTokenizer itself)
         optim_g = optim.AdamW(
@@ -254,19 +267,21 @@ class ALMTokenizer(nn.Module):
 
         # Optimizer for all discriminators
         optim_d = optim.Adam(
-            params=chain(*[D.parameters() for D in discriminators]),
+            params=discriminators.parameters(),
             lr=lr_d,
             betas=betas
         )
 
         # Optionally load checkpoint to resume training
         if start_checkpoint:
-            self.load_model(os.path.join(checkpoint_dir, f"alm_tokenizer_epoch_{start_checkpoint}.pth"))
+            self.load_model(os.path.join(model_dir, f"epoch_{start_checkpoint}.pth"))
+            discriminators.load_state_dict(torch.load(os.path.join(discriminator_dir, f"epoch_{start_checkpoint}.pth")))
 
-        self.train()
 
         # Training loop over epochs
         for epoch in trange(num_epochs, initial=start_checkpoint):
+            
+            self.train()
             
             # Initialize loss accumulators
             losses = {
@@ -275,13 +290,16 @@ class ALMTokenizer(nn.Module):
                 "L_adv": 0.0,
                 "L_feat": 0.0,
                 "L_mae": 0.0,
-                "L_total": 0.0
+                "L_total": 0.0,
+                "L_disc": 0.0
                 }
             
             # Iterate over batches
-            for wavs in dl:
+            for wavs in train_dl:
                 
                 wavs = wavs.to(self.device)
+                
+                wavs = torch.nan_to_num(wavs, nan=0.0, posinf=0.0, neginf=0.0)
 
                 # Forward pass through model
                 res = self(wavs)
@@ -293,7 +311,7 @@ class ALMTokenizer(nn.Module):
                 mask_idx = res["mask_indices"]
 
                 # Compute generator loss (reconstruction, adversarial, MAE, etc.)
-                generator_loss = compute_generator_loss(
+                all_losses = compute_all_losses(
                     x_hat=x_hat,
                     x=x,
                     discriminators=discriminators,
@@ -304,11 +322,12 @@ class ALMTokenizer(nn.Module):
                 )
 
                 # Accumulate losses for logging
-                for loss_type, loss_value in generator_loss.items():
+                for loss_type, loss_value in all_losses.items():
                     losses[loss_type] = losses[loss_type] + loss_value.item()
                 
-                total_gen_loss = generator_loss["L_total"]
+                total_gen_loss = all_losses["L_total"]
 
+                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 # Backpropagation for generator
                 optim_g.zero_grad()
                 total_gen_loss.backward()
@@ -318,25 +337,111 @@ class ALMTokenizer(nn.Module):
                 if epoch % discriminator_train_freq == 0:
                     x_disc = x.detach()
                     x_hat_disc = x_hat.detach()
-                    discriminator_loss = compute_discriminator_loss(discriminators, x_disc, x_hat_disc)
+                    discriminator_loss = compute_discriminator_loss(
+                        discriminators=discriminators,
+                        x_real=x_disc,
+                        x_fake=x_hat_disc
+                    )
 
+                    losses["L_disc"] = losses["L_disc"] + discriminator_loss.item()
+                    
                     optim_d.zero_grad()
                     discriminator_loss.backward()
                     optim_d.step()
 
-                    # Log discriminator loss
-                    writer.add_scalar(f"losses/discriminators", discriminator_loss, epoch)
             
             # Save the model every checkpoint_freq epochs
-            if (epoch + 1) % checkpoint_freq == 0:
-                torch.save(self.state_dict(), os.path.join(checkpoint_dir, f"alm_tokenizer_epoch_{epoch + 1}.pth"))
-                print(f"Model saved at epoch {epoch + 1}")    
+            if epoch % checkpoint_freq == 0:
+                torch.save(self.state_dict(), os.path.join(model_dir, f"epoch_{epoch + start_checkpoint}.pth"))
+                torch.save(discriminators.state_dict(), os.path.join(discriminator_dir, f"epoch_{epoch + start_checkpoint}.pth"))
+                print(f"Model saved at epoch {epoch + start_checkpoint}")    
 
             # Log average losses to TensorBoard
             for loss_type, loss_value in losses.items():
-                losses[loss_type] /= len(dl)
-                writer.add_scalar(f"losses/{loss_type}", losses[loss_type], epoch)
+                if loss_type == "L_disc" and epoch % discriminator_train_freq != 0:
+                    continue
+                losses[loss_type] /= len(train_dl)
+                writer.add_scalar(f"train/{loss_type}", losses[loss_type], epoch + start_checkpoint)
+            
+            # Free up GPU memory
+            torch.cuda.empty_cache()            
+            
+            
+            ##################
+            ### EVALUATION ###
+            ##################
+            
+            if epoch % eval_freq == 0:
+                self.eval()
 
+                with torch.no_grad():
+                    # Initialize loss accumulators
+                    losses = {
+                        "L_time": 0.0,
+                        "L_freq": 0.0,
+                        "L_adv": 0.0,
+                        "L_feat": 0.0,
+                        "L_mae": 0.0,
+                        "L_total": 0.0,
+                        "L_disc": 0.0
+                        }
+                    
+                    for wavs in test_dl:
+                        wavs = wavs.to(self.device)
+                        
+                        wavs = torch.nan_to_num(wavs, nan=0.0, posinf=0.0, neginf=0.0)
+
+                        # Forward pass through model
+                        res = self(wavs)
+
+                        x_hat = res["x_hat"]
+                        x = res["orig_waveform"]
+                        mae_pred = res["mae_pred"]
+                        mae_target = res["mae_target"]
+                        mask_idx = res["mask_indices"]
+
+                        # Compute generator loss (reconstruction, adversarial, MAE, etc.)
+                        all_losses = compute_all_losses(
+                            x_hat=x_hat,
+                            x=x,
+                            discriminators=discriminators,
+                            mae_pred=mae_pred,
+                            mae_target=mae_target,
+                            lambdas = lambdas,
+                            mask_idx=mask_idx
+                        )
+
+                        # Accumulate losses for logging
+                        for loss_type, loss_value in all_losses.items():
+                            losses[loss_type] = losses[loss_type] + loss_value.item()
+
+                        x_disc = x.detach()
+                        x_hat_disc = x_hat.detach()
+                        discriminator_loss = compute_discriminator_loss(
+                            discriminators=discriminators,
+                            x_real=x_disc,
+                            x_fake=x_hat_disc
+                        )
+                        
+                        losses["L_disc"] = losses["L_disc"] + discriminator_loss.item()
+
+                    # Log average losses to TensorBoard
+                    for loss_type, loss_value in losses.items():
+                        losses[loss_type] /= len(test_dl)
+                        writer.add_scalar(f"test/{loss_type}", losses[loss_type], epoch + start_checkpoint)
+
+                    batch = next(iter(test_dl))  # take the first batch
+                    batch = batch.to(self.device)
+                    out = self(batch)
+                    x_orig = out["orig_waveform"]   # shape [B, T]
+                    x_rec  = out["x_hat"]           # shape [B, T]
+
+                    # choose up to 3 examples
+                    num_to_log = min(3, x_orig.size(0))
+                    for i in range(num_to_log):
+                        writer.add_audio(f"audio/orig_{i}", x_orig[i], global_step=epoch + start_checkpoint, sample_rate=24000)
+                        writer.add_audio(f"audio/recon_{i}", x_rec[i], global_step=epoch + start_checkpoint, sample_rate=24000)
+            
             # Free up GPU memory
             torch.cuda.empty_cache()
 

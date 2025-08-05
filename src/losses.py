@@ -79,6 +79,37 @@ def compute_mae_loss(mae_pred: torch.Tensor, mae_target: torch.Tensor, mask_idx:
     return F.mse_loss(mae_pred, mae_target)
 
 
+def compute_adv_feat_losses(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torch.Tensor) -> tuple:
+    """
+    Compute adversarial hinge loss for generator.
+    Args:
+        discriminators: List of Discriminator instances
+        x_hat:          Generated waveform (B, 1, N)
+        x:              Real waveform      (B, 1, N)
+    Returns:
+        Tensor scalar of adversarial loss (sum over discriminators).
+    """
+    adv_loss = 0.0
+    feat_loss = 0.0
+
+    K = discriminators.num_discriminators
+    
+    real_logits, real_fmaps = discriminators(x)
+    fake_logits, fake_fmaps = discriminators(x_hat)
+    
+    for rl, rf, fl, ff in zip(real_logits, real_fmaps, fake_logits, fake_fmaps):
+
+        # Adversarial hinge loss: E[max(0, 1 - D(x_hat))]
+        adv_loss += torch.mean(F.relu(1.0 - fl))
+
+        # Feature matching loss
+        for i, j in zip(rf, ff):
+            feat_loss += F.l1_loss(j, i)
+
+    adv_loss = adv_loss / K
+    feat_loss = feat_loss / K
+    return adv_loss, feat_loss   
+
 def compute_adv_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
     Compute adversarial hinge loss for generator.
@@ -90,7 +121,7 @@ def compute_adv_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torc
         Tensor scalar of adversarial loss (sum over discriminators).
     """
     loss = 0.0
-    K = len(discriminators)
+    K = discriminators.num_discriminators
     for D in discriminators:
 
         fake_logits = D(x_hat)
@@ -110,7 +141,7 @@ def compute_feat_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: tor
         Tensor scalar of feature matching loss.
     """
     loss = 0.0
-    K = len(discriminators)
+    K = discriminators.num_discriminators
     sample_feats_real = discriminators[0].get_features(x)
     L = len(sample_feats_real)
 
@@ -125,7 +156,7 @@ def compute_feat_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: tor
     return normalized_loss
 
 
-def compute_generator_loss(
+def compute_all_losses(
     x_hat: torch.Tensor,
     x: torch.Tensor,
     discriminators: nn.ModuleList,
@@ -152,8 +183,9 @@ def compute_generator_loss(
     losses['L_freq'] = lambdas["L_freq"] * compute_freq_loss(x_hat, x)
 
     # Adversarial
-    losses['L_adv']  = lambdas["L_adv"] * compute_adv_loss(discriminators, x_hat, x)
-    losses['L_feat'] = lambdas["L_feat"] * compute_feat_loss(discriminators, x_hat, x)
+    losses['L_adv'], losses['L_feat']  = compute_adv_feat_losses(discriminators, x_hat, x)
+    losses['L_adv'] = lambdas["L_adv"] * losses['L_adv']
+    losses['L_feat'] = lambdas["L_feat"] * losses['L_feat']
 
     # MAE
     if mae_pred is not None and mae_target is not None and mask_idx is not None:
@@ -178,11 +210,15 @@ def compute_discriminator_loss(discriminators: nn.ModuleList, x_real, x_fake):
             K = len(discriminators)
         except TypeError:
             K = discriminators.num_discriminators
-        for D in discriminators:
+
+        real_logits, _ = discriminators(x_real)
+        fake_logits, _ = discriminators(x_fake.detach())
+        
+        for rl, fl in zip(real_logits, fake_logits):
 
             # Hinge loss
-            loss = loss + (F.relu(1.0 - D(x_real)).mean()
-                + F.relu(1.0 + D(x_fake)).mean())
+            loss = loss + (F.relu(1.0 - rl).mean()
+                + F.relu(1.0 + fl).mean())
         
         return loss / K
 

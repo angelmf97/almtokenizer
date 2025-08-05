@@ -10,7 +10,7 @@ class Unpatchify:
         parameters: List of encoder parameters.
         device: The device (CPU or CUDA) to run the encoder on.
     """
-    def __init__(self, device: str, model_name="encodec_24khz"):
+    def __init__(self, device: str, requires_grad: bool = False, model_name="encodec_24khz"):
         """
         Initializes the Unpatchify class by loading the Encodec decoder and moving it to the specified device.
 
@@ -27,6 +27,10 @@ class Unpatchify:
         self.parameters = list(self.decoder.parameters())
         self.device = device
         self.decoder.to(device)
+        
+        # Set requires_grad for the parameters
+        for param in self.parameters:
+            param.requires_grad = requires_grad
 
     def decode(self, codes):
         """
