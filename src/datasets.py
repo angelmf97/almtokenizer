@@ -2,9 +2,7 @@ import torch
 from torch.utils.data import Dataset
 import torchaudio
 import glob
-import mirdata
 import numpy as np
-import bisect
 import os
 
 class JamendoDataset(Dataset):
@@ -243,7 +241,7 @@ def collate_fn_audio(batch, nsecs=1):
     lengths = torch.tensor([w.shape[1] for w in waveforms], dtype=torch.long)
     max_length = lengths.max().item()
     if max_length > 24000 * nsecs:  # 24000 samples per second
-        max_length = 24000 * nsecs
+        max_length = int(24000 * nsecs)
 
     # Assume all waveforms have the same number of channels
     channels = waveforms[0].shape[0]
