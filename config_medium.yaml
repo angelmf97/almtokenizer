@@ -54,7 +54,7 @@ dataloader:
   train_subset_size: null # set to null to use the full dataset
   test_subset_size: null # set to null to use the full dataset
   num_workers: 0
-  nsecs: 0.1 # desired length of the audios (in seconds) for trimming and padding audio samples
+  nsecs: 2.0 # desired length of the audios (in seconds) for trimming and padding audio samples
   shuffle: false
 
 ##############################
