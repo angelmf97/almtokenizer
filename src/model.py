@@ -15,7 +15,7 @@ from itertools import chain
 from typing import Optional
 import os
 
-from tqdm import trange, tqdm
+from tqdm.auto import trange, tqdm
 from torch.utils.tensorboard.writer import SummaryWriter
 
 
@@ -132,7 +132,7 @@ class ALMTokenizer(nn.Module):
         else:
             frames = x
 
-        self.window_size = random.randint(2, 10)
+        #self.window_size = random.randint(2, 10)
         
         frames = frames.permute(0, 2, 1)  # (B, D, T) for Transformer compatibility
         
@@ -217,6 +217,7 @@ class ALMTokenizer(nn.Module):
             checkpoint_freq: int = 10,
             start_checkpoint: Optional[int] = 0,
             discriminator_train_freq: int = 30,
+            d_train_prob: float = 0.33,
             eval_freq: int = 10,
             writer_dir: str = "writer",
             checkpoint_dir: str = "checkpoints",
@@ -281,7 +282,10 @@ class ALMTokenizer(nn.Module):
         # Training loop over epochs
         for epoch in trange(num_epochs, initial=start_checkpoint):
             
+            torch.cuda.reset_peak_memory_stats()
+            
             self.train()
+            discriminators.train()
             
             # Initialize loss accumulators
             losses = {
@@ -294,8 +298,12 @@ class ALMTokenizer(nn.Module):
                 "L_disc": 0.0
                 }
             
+            d_counter = 0
+
             # Iterate over batches
-            for wavs in train_dl:
+            for wavs in tqdm(train_dl, desc=f"Epoch progress: ", leave=False):
+
+                self.window_size = random.randint(2, 10)
                 
                 wavs = wavs.to(self.device)
                 
@@ -309,6 +317,27 @@ class ALMTokenizer(nn.Module):
                 mae_pred = res["mae_pred"]
                 mae_target = res["mae_target"]
                 mask_idx = res["mask_indices"]
+
+
+                a = random.random()
+                # Train discriminators at specified frequency
+                #if epoch % discriminator_train_freq == 0:
+                if a < d_train_prob:
+                    x_disc = x.detach()
+                    x_hat_disc = x_hat.detach()
+                    discriminator_loss = compute_discriminator_loss(
+                        discriminators=discriminators,
+                        x_real=x_disc,
+                        x_fake=x_hat_disc
+                    )
+
+                    losses["L_disc"] = losses["L_disc"] + discriminator_loss.item()
+                    
+                    optim_d.zero_grad(set_to_none=False)
+                    discriminator_loss.backward()
+                    #torch.nn.utils.clip_grad_norm_(discriminators.parameters(), max_norm=1.0)
+                    optim_d.step()
+                    d_counter += 1
 
                 # Compute generator loss (reconstruction, adversarial, MAE, etc.)
                 all_losses = compute_all_losses(
@@ -327,29 +356,11 @@ class ALMTokenizer(nn.Module):
                 
                 total_gen_loss = all_losses["L_total"]
 
-                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 # Backpropagation for generator
-                optim_g.zero_grad()
+                optim_g.zero_grad(set_to_none=False)
                 total_gen_loss.backward()
+                #torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 optim_g.step()
-            
-                # Train discriminators at specified frequency
-                if epoch % discriminator_train_freq == 0:
-                    x_disc = x.detach()
-                    x_hat_disc = x_hat.detach()
-                    discriminator_loss = compute_discriminator_loss(
-                        discriminators=discriminators,
-                        x_real=x_disc,
-                        x_fake=x_hat_disc
-                    )
-
-                    losses["L_disc"] = losses["L_disc"] + discriminator_loss.item()
-                    
-                    torch.nn.utils.clip_grad_norm_(discriminators.parameters(), max_norm=1.0)
-                    optim_d.zero_grad()
-                    discriminator_loss.backward()
-                    optim_d.step()
-
             
             # Save the model every checkpoint_freq epochs
             if epoch % checkpoint_freq == 0:
@@ -359,14 +370,20 @@ class ALMTokenizer(nn.Module):
 
             # Log average losses to TensorBoard
             for loss_type, loss_value in losses.items():
-                if loss_type == "L_disc" and epoch % discriminator_train_freq != 0:
-                    continue
-                losses[loss_type] /= len(train_dl)
+                if loss_type == "L_disc":
+                    if d_counter > 0:
+                        losses[loss_type] /= d_counter
+                    else:
+                        losses[loss_type] = torch.nan
+                else:
+                    losses[loss_type] /= len(train_dl)
                 writer.add_scalar(f"train/{loss_type}", losses[loss_type], epoch + start_checkpoint)
+            
+            max_memory = torch.cuda.max_memory_allocated(self.device) / (1024 ** 2)  # in MB
+            print(f"Epoch {epoch+1}: Max GPU memory used = {max_memory:.2f} MB")
             
             # Free up GPU memory
             torch.cuda.empty_cache()            
-            
             
             ##################
             ### EVALUATION ###
@@ -374,6 +391,7 @@ class ALMTokenizer(nn.Module):
             
             if epoch % eval_freq == 0:
                 self.eval()
+                discriminators.eval()
 
                 with torch.no_grad():
                     # Initialize loss accumulators
@@ -387,7 +405,7 @@ class ALMTokenizer(nn.Module):
                         "L_disc": 0.0
                         }
                     
-                    for wavs in test_dl:
+                    for wavs in tqdm(test_dl, desc=f"Validation progress: ", leave=False):
                         wavs = wavs.to(self.device)
                         
                         wavs = torch.nan_to_num(wavs, nan=0.0, posinf=0.0, neginf=0.0)
@@ -437,8 +455,8 @@ class ALMTokenizer(nn.Module):
                     x_orig = out["orig_waveform"]   # shape [B, T]
                     x_rec  = out["x_hat"]           # shape [B, T]
 
-                    # choose up to 3 examples
-                    num_to_log = min(3, x_orig.size(0))
+                    # choose up to 6 examples
+                    num_to_log = min(6, x_orig.size(0))
                     for i in range(num_to_log):
                         writer.add_audio(f"audio/orig_{i}", x_orig[i], global_step=epoch + start_checkpoint, sample_rate=24000)
                         writer.add_audio(f"audio/recon_{i}", x_rec[i], global_step=epoch + start_checkpoint, sample_rate=24000)
