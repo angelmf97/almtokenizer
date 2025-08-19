@@ -89,26 +89,39 @@ def compute_adv_feat_losses(discriminators: nn.ModuleList, x_hat: torch.Tensor, 
     Returns:
         Tensor scalar of adversarial loss (sum over discriminators).
     """
-    adv_loss = 0.0
-    feat_loss = 0.0
+    """
+    Returns (L_adv, L_feat) for the generator.
+    - Hinge-G (paper style): E[max(0, 1 - D(fake))]
+    - Feature matching: mean L1 over layers per discriminator, then mean over K
+    Assumes D(x) -> (logits_list, features_list) with one entry per sub-discriminator.
+    """
 
-    K = discriminators.num_discriminators
-    
-    real_logits, real_fmaps = discriminators(x)
-    fake_logits, fake_fmaps = discriminators(x_hat)
-    
-    for rl, rf, fl, ff in zip(real_logits, real_fmaps, fake_logits, fake_fmaps):
+    # Forward
+    real_logits_list, real_fmaps_list = discriminators(x)       # lists of length K
+    fake_logits_list, fake_fmaps_list = discriminators(x_hat)
 
-        # Adversarial hinge loss: E[max(0, 1 - D(x_hat))]
-        adv_loss += torch.mean(F.relu(1.0 - fl))
+    K = len(fake_logits_list)   # number of sub-discriminators
 
-        # Feature matching loss
-        for i, j in zip(rf, ff):
-            feat_loss += F.l1_loss(j, i)
+    # --- Adversarial (hinge-G using logit maps) ---
+    # L_adv = (1/K) * sum_k mean( relu(1 - D_k(fake_map)) )
+    L_adv = sum(F.relu(1.0 - fl).mean() for fl in fake_logits_list) / K
 
-    adv_loss = adv_loss / K
-    feat_loss = feat_loss / K
-    return adv_loss, feat_loss   
+    # --- relative feature matching (paper Eq.) ---
+    L_feat = 0.0
+    eps = 1e-8
+    for rf_k, ff_k in zip(real_fmaps_list, fake_fmaps_list):
+        # rf_k / ff_k are lists of feature maps for sub-D k
+        Lk = len(rf_k)
+        perD = 0.0
+        for r, f in zip(rf_k, ff_k):
+            r_det = r.detach()
+            num = (f - r_det).abs().mean()          # ||D_k^l(x̂) - D_k^l(x)||_1 mean over all dims
+            den = r_det.abs().mean() + eps          # mean(||D_k^l(x)||_1)
+            perD += num / den
+        L_feat += perD / Lk
+    L_feat /= K
+
+    return L_adv, L_feat
 
 def compute_adv_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
@@ -205,7 +218,7 @@ def compute_all_losses(
 def compute_discriminator_loss(discriminators: nn.ModuleList, x_real, x_fake):
 
         loss = 0.0
-        feat_loss = 0.0
+
         try:
             K = len(discriminators)
         except TypeError:
