@@ -380,7 +380,7 @@ class ALMTokenizer(nn.Module):
                 writer.add_scalar(f"train/{loss_type}", losses[loss_type], epoch + start_checkpoint)
             
             max_memory = torch.cuda.max_memory_allocated(self.device) / (1024 ** 2)  # in MB
-            print(f"Epoch {epoch+1}: Max GPU memory used = {max_memory:.2f} MB")
+            print(f"Epoch {epoch + start_checkpoint}: Max GPU memory used = {max_memory:.2f} MB")
             
             # Free up GPU memory
             torch.cuda.empty_cache()            
@@ -406,6 +406,9 @@ class ALMTokenizer(nn.Module):
                         }
                     
                     for wavs in tqdm(test_dl, desc=f"Validation progress: ", leave=False):
+                        
+                        self.window_size = random.randint(2, 10)
+
                         wavs = wavs.to(self.device)
                         
                         wavs = torch.nan_to_num(wavs, nan=0.0, posinf=0.0, neginf=0.0)
@@ -451,6 +454,7 @@ class ALMTokenizer(nn.Module):
 
                     batch = next(iter(test_dl))  # take the first batch
                     batch = batch.to(self.device)
+                    self.window_size = 3
                     out = self(batch)
                     x_orig = out["orig_waveform"]   # shape [B, T]
                     x_rec  = out["x_hat"]           # shape [B, T]
