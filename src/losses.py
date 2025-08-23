@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+import torchaudio
 
 from .discriminator import Discriminator
 
@@ -47,6 +48,51 @@ def default_stft(x: torch.Tensor,
         return_complex=True
     )  # (B, freq_bins, time_frames)
     return spec
+
+
+class MultiScaleSpectrogramLoss(torch.nn.Module):
+    """
+    Multiscale frequency-domain loss using torchaudio.transforms.Spectrogram.
+
+    ℓ_f(x, x̂) = (1/|S|) * Σ_{i∈S} [ ||S_i(x) - S_i(x̂)||_1  +  α_i ||S_i(x) - S_i(x̂)||_2 ]
+    with S = {5,6,7,8,9,10,11}, win_length=2**i, hop=2**i//4, n_fft=2**i, α_i=1.
+    """
+    def __init__(self, scales=range(5, 12), alpha_per_scale=None, power=1.0, eps=1e-8):
+        super().__init__()
+        self.scales = list(scales)
+        self.alpha = {i: 1.0 for i in self.scales}
+        if alpha_per_scale is not None:
+            self.alpha.update(alpha_per_scale)
+        self.power = power
+        self.eps = eps
+
+        # Build one Spectrogram transform per scale
+        self.specs = torch.nn.ModuleDict()
+        for i in self.scales:
+            n = 2 ** i
+            self.specs[str(i)] = torchaudio.transforms.Spectrogram(
+                n_fft=n,
+                win_length=n,
+                hop_length=n // 4,
+                power=self.power,     # 1.0 -> magnitude, 2.0 -> power
+                normalized=True,
+                center=True,
+                pad_mode="reflect"
+            )
+
+    def forward(self, x_hat, x):
+        losses = []
+        for i in self.scales:
+            S = self.specs[str(i)]
+            X = S(x)                      # (B, 1, F, T')
+            Xh = S(x_hat)
+
+            diff = X - Xh
+            l1 = F.l1_loss(torch.abs(Xh), torch.abs(X))
+            l2 = F.mse_loss(torch.abs(Xh), torch.abs(X))
+            losses.append(l1 + self.alpha[i] * l2)
+
+        return torch.stack(losses).mean()
 
 
 def compute_freq_loss(x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -120,7 +166,7 @@ def compute_adv_feat_losses(discriminators: nn.ModuleList, x_hat: torch.Tensor, 
             perD += num / den
         L_feat += perD / Lk
     L_feat /= K
-
+ 
     return L_adv, L_feat
 
 def compute_adv_loss(discriminators: nn.ModuleList, x_hat: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -193,7 +239,7 @@ def compute_all_losses(
     losses = {}
     # Reconstruction
     losses['L_time'] = lambdas["L_time"] * compute_time_loss(x_hat, x)
-    losses['L_freq'] = lambdas["L_freq"] * compute_freq_loss(x_hat, x)
+    losses['L_freq'] = lambdas["L_freq"] * MultiScaleSpectrogramLoss().to(x.device)(x_hat, x)
 
     # Adversarial
     losses['L_adv'], losses['L_feat']  = compute_adv_feat_losses(discriminators, x_hat, x)
