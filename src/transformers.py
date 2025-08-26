@@ -38,7 +38,7 @@ class QueryEncoder(nn.Module):
     - window_size: interval at which to insert a CLS token
     """
 
-    def __init__(self, embed_dim: int = 128, n_heads: int = 8, n_layers: int = 6, sliding_window_size: int = 64, dim_feedforward: int = 512):
+    def __init__(self, embed_dim: int = 128, n_heads: int = 8, n_layers: int = 6, sliding_window_size: int = 32, dim_feedforward: int = 512):
         super().__init__()
         self.embed_dim = embed_dim
         self.sliding_window_size = sliding_window_size
