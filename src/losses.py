@@ -70,7 +70,9 @@ class MultiScaleSpectrogramLoss(torch.nn.Module):
         self.specs = torch.nn.ModuleDict()
         for i in self.scales:
             n = 2 ** i
-            self.specs[str(i)] = torchaudio.transforms.Spectrogram(
+            self.specs[str(i)] = torchaudio.transforms.MelSpectrogram(
+                n_mels=64,
+                sample_rate=24000,
                 n_fft=n,
                 win_length=n,
                 hop_length=n // 4,
@@ -84,12 +86,10 @@ class MultiScaleSpectrogramLoss(torch.nn.Module):
         losses = []
         for i in self.scales:
             S = self.specs[str(i)]
-            X = S(x)                      # (B, 1, F, T')
+            X = S(x)                      # (B, C, F, T')
             Xh = S(x_hat)
-
-            diff = X - Xh
-            l1 = F.l1_loss(torch.abs(Xh), torch.abs(X))
-            l2 = F.mse_loss(torch.abs(Xh), torch.abs(X))
+            l1 = F.l1_loss(Xh, X)
+            l2 = torch.sqrt(F.mse_loss(Xh, X) + self.eps)
             losses.append(l1 + self.alpha[i] * l2)
 
         return torch.stack(losses).mean()
@@ -149,23 +149,23 @@ def compute_adv_feat_losses(discriminators: nn.ModuleList, x_hat: torch.Tensor, 
     K = len(fake_logits_list)   # number of sub-discriminators
 
     # --- Adversarial (hinge-G using logit maps) ---
-    # L_adv = (1/K) * sum_k mean( relu(1 - D_k(fake_map)) )
+    # L_adv = (1/K) * sum_k mean( relu(1 - D_k(x_hat)) )
     L_adv = sum(F.relu(1.0 - fl).mean() for fl in fake_logits_list) / K
 
     # --- relative feature matching (paper Eq.) ---
-    L_feat = 0.0
+    L_feat = torch.zeros((), device=x.device)
     eps = 1e-8
-    for rf_k, ff_k in zip(real_fmaps_list, fake_fmaps_list):
+    for i, (rf_k, ff_k) in enumerate(zip(real_fmaps_list, fake_fmaps_list)):
         # rf_k / ff_k are lists of feature maps for sub-D k
         Lk = len(rf_k)
-        perD = 0.0
-        for r, f in zip(rf_k, ff_k):
+        perD = torch.zeros((), device=x.device)
+        for j, (r, f) in enumerate(zip(rf_k, ff_k)):
             r_det = r.detach()
-            num = (f - r_det).abs().mean()          # ||D_k^l(x̂) - D_k^l(x)||_1 mean over all dims
+            num = F.l1_loss(f, r_det)       # ||D_k^l(x̂) - D_k^l(x)||_1 mean over all dims
             den = r_det.abs().mean() + eps          # mean(||D_k^l(x)||_1)
-            perD += num / den
-        L_feat += perD / Lk
-    L_feat /= K
+            perD = perD + (num / den)
+        L_feat = L_feat + (perD / (j + 1))
+    L_feat = L_feat / (i + 1)
  
     return L_adv, L_feat
 
@@ -261,7 +261,7 @@ def compute_all_losses(
     )
     return losses
 
-def compute_discriminator_loss(discriminators: nn.ModuleList, x_real, x_fake):
+def compute_discriminator_loss(discriminators: nn.ModuleList, x_fake, x_real):
 
         loss = 0.0
 
@@ -269,7 +269,8 @@ def compute_discriminator_loss(discriminators: nn.ModuleList, x_real, x_fake):
             K = len(discriminators)
         except TypeError:
             K = discriminators.num_discriminators
-
+        
+        # Logits shape: [B, C, T, F]
         real_logits, _ = discriminators(x_real)
         fake_logits, _ = discriminators(x_fake.detach())
         
