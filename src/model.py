@@ -292,6 +292,8 @@ class ALMTokenizer(nn.Module):
             self.load_model(os.path.join(model_dir, f"epoch_{start_checkpoint}.pth"), discriminators, optim_g, optim_d)
             #discriminators.load_state_dict(torch.load(os.path.join(discriminator_dir, f"epoch_{start_checkpoint}.pth")))
 
+        else:
+            start_checkpoint = 0
 
         # Training loop over epochs
         for epoch in trange(num_epochs, initial=start_checkpoint + 1):
