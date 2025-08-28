@@ -74,32 +74,42 @@ class QueryEncoder(nn.Module):
 
         return x
 
-class QueryDecoder(nn.Module):
+class MAEDecoder(nn.Module):
     """
-    Query‐based Transformer Decoder (interleaved mask tokens).
-    - embed_dim: dimension for decoder embeddings
-    - n_heads, n_layers: TransformerDecoder config
-    - window_size: how many mask tokens per CLS token
+    Query‐based Transformer Encoder (interleaved CLS tokens).
+    - embed_dim: dimension of frame embeddings
+    - n_heads, n_layers: TransformerEncoder config
+    - window_size: interval at which to insert a CLS token
     """
 
-    def __init__(self, embed_dim: int = 512, n_heads: int = 8, n_layers: int = 6, dim_feedforward: int = 512):
+    """
+    Query-based Transformer Encoder (interleaved CLS tokens).
+    Keeps your sliding-window causal mask; uses RoPE instead of sinusoidal PE.
+    """
+    
+    def __init__(self, embed_dim: int = 128, n_heads: int = 8, n_layers: int = 6,
+                 sliding_window_size: int = 32, dim_feedforward: int = 512):
         super().__init__()
+        
         self.embed_dim = embed_dim
-        decoder_layer = TransformerDecoderLayer(d_model=embed_dim, nhead=n_heads, batch_first=True, dim_feedforward=dim_feedforward)
-        self.transformer = TransformerDecoder(decoder_layer, num_layers=n_layers)
+        self.sliding_window_size = sliding_window_size
+        encoder_layer = TransformerEncoderLayer(d_model=embed_dim, nhead=n_heads, batch_first=True, dim_feedforward=dim_feedforward)
+        self.transformer = TransformerEncoder(encoder_layer, num_layers=n_layers)
 
         # Positional encoding
-        self.pos_decoder = PositionalEncoding(embed_dim)
+        self.pos_encoder = PositionalEncoding(embed_dim)
 
-    def forward(self, x: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, masked_pos: torch.Tensor | None = None) -> torch.Tensor:
         """
-        frames: (batch, T_frames, embed_dim)
-        returns: (batch, T_expanded, embed_dim)  -- to be reassembled and fed into UnPatchify
+        frames: (B, T, D)
+        position_ids: optional (B, T) positions; if None, RoPE assumes 0..T-1 per sample.
+        returns: (B, T, D)
         """
+        x_pos_enc = self.pos_encoder(x)
 
-        # Positional encoding + TransformerDecoder
-        x = self.pos_decoder(x)  # (B, T_expanded, D)
-        out = self.transformer(x, target)  
+        x = self.pos_encoder(x_pos_enc[:, masked_pos, :])  # (B, T + n_cls, D)
 
-        return out
+        x = self.transformer(x)  # (B, T + n_cls, D)
+
+        return x
 
