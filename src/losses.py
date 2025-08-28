@@ -47,9 +47,9 @@ def MultiScaleSpectrogramLoss(x_hat, x, scales=range(5, 12), alpha_per_scale=Non
         
         l1 = F.l1_loss(Xh, X)
 
-        logX = torch.log(X.abs() + eps)
-        logXh = torch.log(Xh.abs() + eps)
-        l2 = torch.sqrt(((logX - logXh)**2).mean(dim=-2)).mean()
+        # logX = torch.log(X.abs() + eps)
+        # logXh = torch.log(Xh.abs() + eps)
+        l2 = torch.sqrt(((X - Xh)**2).mean(dim=-2)).mean()
         
         losses.append(l1 + alpha[i] * l2)
 
