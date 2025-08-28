@@ -59,7 +59,7 @@ discriminator:
 ################################
   
 dataloader:
-  dataset_path: "../4060432"  # PATH TO THE DATASET DIRECTORY
+  dataset_path: "data"  # PATH TO THE DATASET DIRECTORY
   batch_size: 64
   train_subset_size: null # set to null to use the full dataset
   test_subset_size: null # set to null to use the full dataset
