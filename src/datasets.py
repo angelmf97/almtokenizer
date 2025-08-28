@@ -249,16 +249,20 @@ def collate_fn_audio(batch, nsecs=1):
     # Prepare a tensor of zeros for padding
     batch_size = len(waveforms)
     padded_waveforms = torch.zeros(batch_size, channels, max_length)
+    padding_mask = torch.zeros(batch_size, max_length, dtype=torch.bool)
 
     # Copy each waveform into the padded tensor
     for i, c in enumerate(waveforms):
         length = min(c.shape[1], max_length)
         segment = c[:, :length]
         max_amp = segment.abs().max()
+        if max_amp == 0:
+            max_amp = segment.new_tensor(1.0)
         segment_norm = segment / max_amp
         padded_waveforms[i, :, :length] = segment_norm
+        padding_mask[i, :length] = True
 
-    return padded_waveforms
+    return padded_waveforms, padding_mask
 
 
 from typing import Any, Dict, List, Optional
@@ -305,6 +309,8 @@ class GoodSoundsDataset(Dataset):
                s.octave,
                s.dynamics,
                s.klass,
+               s.sustain,
+               s.release,
                t.filename
         FROM sounds s
         JOIN takes t ON s.id = t.sound_id
@@ -331,7 +337,9 @@ class GoodSoundsDataset(Dataset):
                 'octave': row['octave'],
                 'dynamics': row['dynamics'],
                 'klass': row['klass'],
-                'file_path': file_path
+                'file_path': file_path,
+                'sustain': row['sustain'],
+                'release': row['release']
             })
 
     def __len__(self) -> int:
@@ -368,6 +376,9 @@ class GoodSoundsDataset(Dataset):
             'sound_id': record['sound_id'],
             'take_id': record['take_id'],
             'klass': record['klass'],
+            'sustain': record['sustain'],
+            'release': record['release']
+
         }
     
 import math
