@@ -257,7 +257,8 @@ def compute_all_losses(
 
 
     # Forward
-    logits_r, fmap_r = discriminators(x)       # lists of length K
+    with torch.no_grad():
+        logits_r, fmap_r = discriminators(x)       # lists of length K
     logits_f, fmap_f = discriminators(x_hat)
     
     # Adversarial
