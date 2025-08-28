@@ -5,8 +5,9 @@ import torch.nn.functional as F
 import random
 from .patchify import Patchify
 from .unpatchify import Unpatchify
-from .transformers import QueryEncoder, QueryDecoder, PositionalEncoding
+from .transformers_rope import QueryEncoder, MAEDecoder
 from .utils import interleave_cls_tokens, retrieve_cls_tokens, interleave_mask_tokens, mask_frames
+from .losses import MultiScaleSpectrogramLoss
 
 from typing import Iterable
 import torch.optim as optim
@@ -55,7 +56,7 @@ class ALMTokenizer(nn.Module):
         self.query_encoder = QueryEncoder(**encoder_args)
         self.query_decoder = QueryEncoder(**decoder_args)
 
-        self.mae_decoder = QueryDecoder(**mae_decoder_args)
+        self.mae_decoder = MAEDecoder(**mae_decoder_args)
 
         self.mask_token = nn.Parameter(torch.zeros(1, 1, encoder_args["embed_dim"]), requires_grad=True)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, encoder_args["embed_dim"]), requires_grad=True)
@@ -116,7 +117,7 @@ class ALMTokenizer(nn.Module):
 
 
     def forward(
-        self, x: torch.Tensor, mask_rate: float = 0.3, w: int = None
+        self, x: torch.Tensor, mask_rate: float = 0.3, w: int = None, padding_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         x: (batch, 1, N_samples)
@@ -157,7 +158,7 @@ class ALMTokenizer(nn.Module):
         )
 
         # Decode masked frames
-        dec_out = self.query_decoder(cls_and_mask)
+        dec_out = self.query_decoder(cls_and_mask)  # (B, T + n_cls, D)
 
         # Remove CLS tokens
         _, dec_out = retrieve_cls_tokens(dec_out, cls_positions=cls_positions)
@@ -166,22 +167,24 @@ class ALMTokenizer(nn.Module):
         # Unpatchify
         x_hat = self.unpatchify.decode(dec_out.permute(0, 2, 1)) # (B, 1, N_samples)
 
+        x_hat = torch.nan_to_num(x_hat, nan=0.0, posinf=0.0, neginf=0.0)
+        
         # Trim for wrong frame count caused by encodec
         if x_hat.size(2) > x.size(2):
             x_hat = x_hat[:, :, :x.size(2)]
 
         # MAE training
         #if self.training:
-        masked_frames, masked_idx = mask_frames(frames, mask_rate=mask_rate, mask_token=self.mask_token)
+        masked_frames, masked_idx = mask_frames(cls_frames, mask_rate=mask_rate, mask_token=self.mask_token)
 
         # Encoder
         mae_enc_out = self.query_encoder(masked_frames)  # (B, T, D)
         
         # Decoder
-        mae_dec_out = self.mae_decoder(mae_enc_out, frames)
+        mae_dec_out = self.mae_decoder(x=mae_enc_out, masked_pos=masked_idx)
 
-        pred_frames = mae_dec_out[:, masked_idx, :]  # (B, num_masked, D)
-        original_frames = frames[:, masked_idx, :]
+        pred_frames = mae_dec_out  # (B, num_masked, D)
+        original_frames = cls_frames[:, masked_idx, :]
 
         return {
             "x_hat": x_hat,
@@ -191,10 +194,11 @@ class ALMTokenizer(nn.Module):
             "mae_target": original_frames
         }
 
-
-        return x_hat
-    
-    def load_model(self, path):
+    def load_model(self, 
+                   path, 
+                   discriminators: Optional[torch.nn.Module] = None, 
+                   optim_g: Optional[torch.optim.Optimizer] = None, 
+                   optim_d: Optional[torch.optim.Optimizer] = None):
         """
         Loads model weights from the specified file path.
 
@@ -204,7 +208,17 @@ class ALMTokenizer(nn.Module):
         Returns:
             None
         """
-        self.load_state_dict(torch.load(path, map_location=self.device))
+
+        chkpt = torch.load(path, map_location=self.device)
+
+        self.load_state_dict(chkpt["model"])
+        if discriminators is not None:
+            discriminators.load_state_dict(chkpt["discriminators"])
+        if optim_g is not None:
+            optim_g.load_state_dict(chkpt["optim_g"])
+        if optim_d is not None:
+            optim_d.load_state_dict(chkpt["optim_d"])
+
         return None
 
     def train_model(
@@ -215,7 +229,7 @@ class ALMTokenizer(nn.Module):
             lambdas: dict,
             num_epochs: int = 200,
             checkpoint_freq: int = 10,
-            start_checkpoint: Optional[int] = 0,
+            start_checkpoint: Optional[int] = None,
             discriminator_train_freq: int = 30,
             d_train_prob: float = 0.33,
             eval_freq: int = 10,
@@ -261,26 +275,26 @@ class ALMTokenizer(nn.Module):
 
         # Optimizer for generator (the ALMTokenizer itself)
         optim_g = optim.AdamW(
-            filter(lambda p: p.requires_grad, self.parameters()),
+            params=filter(lambda p: p.requires_grad, self.parameters()),
             lr=lr_g,
             weight_decay=weight_decay
         )
 
         # Optimizer for all discriminators
         optim_d = optim.Adam(
-            params=discriminators.parameters(),
+            params=filter(lambda p: p.requires_grad, discriminators.parameters()),
             lr=lr_d,
             betas=betas
         )
 
         # Optionally load checkpoint to resume training
-        if start_checkpoint:
-            self.load_model(os.path.join(model_dir, f"epoch_{start_checkpoint}.pth"))
-            discriminators.load_state_dict(torch.load(os.path.join(discriminator_dir, f"epoch_{start_checkpoint}.pth")))
+        if start_checkpoint is not None:
+            self.load_model(os.path.join(model_dir, f"epoch_{start_checkpoint}.pth"), discriminators, optim_g, optim_d)
+            #discriminators.load_state_dict(torch.load(os.path.join(discriminator_dir, f"epoch_{start_checkpoint}.pth")))
 
 
         # Training loop over epochs
-        for epoch in trange(num_epochs, initial=start_checkpoint):
+        for epoch in trange(num_epochs, initial=start_checkpoint + 1):
             
             torch.cuda.reset_peak_memory_stats()
             
@@ -301,7 +315,7 @@ class ALMTokenizer(nn.Module):
             d_counter = 0
 
             # Iterate over batches
-            for wavs in tqdm(train_dl, desc=f"Epoch progress: ", leave=False):
+            for wavs, padding_mask in tqdm(train_dl, desc=f"Epoch progress: ", leave=False):
 
                 self.window_size = random.randint(2, 10)
                 
@@ -318,7 +332,6 @@ class ALMTokenizer(nn.Module):
                 mae_target = res["mae_target"]
                 mask_idx = res["mask_indices"]
 
-
                 a = random.random()
                 # Train discriminators at specified frequency
                 #if epoch % discriminator_train_freq == 0:
@@ -327,8 +340,8 @@ class ALMTokenizer(nn.Module):
                     x_hat_disc = x_hat.detach()
                     discriminator_loss = compute_discriminator_loss(
                         discriminators=discriminators,
-                        x_real=x_disc,
-                        x_fake=x_hat_disc
+                        x_fake=x_hat_disc,
+                        x_real=x_disc
                     )
 
                     losses["L_disc"] = losses["L_disc"] + discriminator_loss.item()
@@ -339,6 +352,7 @@ class ALMTokenizer(nn.Module):
                     optim_d.step()
                     d_counter += 1
 
+                for p in discriminators.parameters(): p.requires_grad = False
                 # Compute generator loss (reconstruction, adversarial, MAE, etc.)
                 all_losses = compute_all_losses(
                     x_hat=x_hat,
@@ -361,11 +375,17 @@ class ALMTokenizer(nn.Module):
                 total_gen_loss.backward()
                 #torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 optim_g.step()
+                for p in discriminators.parameters(): p.requires_grad = True
             
             # Save the model every checkpoint_freq epochs
             if epoch % checkpoint_freq == 0:
-                torch.save(self.state_dict(), os.path.join(model_dir, f"epoch_{epoch + start_checkpoint}.pth"))
-                torch.save(discriminators.state_dict(), os.path.join(discriminator_dir, f"epoch_{epoch + start_checkpoint}.pth"))
+                torch.save({"model": self.state_dict(),
+                            "discriminators": discriminators.state_dict(),
+                            "optim_g": optim_g.state_dict(),
+                            "optim_d": optim_d.state_dict(),
+                            "epoch": epoch},
+                            os.path.join(model_dir, f"epoch_{epoch + start_checkpoint}.pth"))
+                #torch.save(discriminators.state_dict(), os.path.join(discriminator_dir, f"epoch_{epoch + start_checkpoint}.pth"))
                 print(f"Model saved at epoch {epoch + start_checkpoint}")    
 
             # Log average losses to TensorBoard
@@ -405,7 +425,7 @@ class ALMTokenizer(nn.Module):
                         "L_disc": 0.0
                         }
                     
-                    for wavs in tqdm(test_dl, desc=f"Validation progress: ", leave=False):
+                    for wavs, padding_mask in tqdm(test_dl, desc=f"Validation progress: ", leave=False):
                         
                         self.window_size = random.randint(2, 10)
 
@@ -452,7 +472,7 @@ class ALMTokenizer(nn.Module):
                         losses[loss_type] /= len(test_dl)
                         writer.add_scalar(f"test/{loss_type}", losses[loss_type], epoch + start_checkpoint)
 
-                    batch = next(iter(test_dl))  # take the first batch
+                    batch, padding_mask = next(iter(test_dl))  # take the first batch
                     batch = batch.to(self.device)
                     self.window_size = 3
                     out = self(batch)
@@ -464,7 +484,8 @@ class ALMTokenizer(nn.Module):
                     for i in range(num_to_log):
                         writer.add_audio(f"audio/orig_{i}", x_orig[i], global_step=epoch + start_checkpoint, sample_rate=24000)
                         writer.add_audio(f"audio/recon_{i}", x_rec[i], global_step=epoch + start_checkpoint, sample_rate=24000)
-            
+
+
             # Free up GPU memory
             torch.cuda.empty_cache()
 
