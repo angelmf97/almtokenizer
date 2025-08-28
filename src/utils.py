@@ -169,3 +169,56 @@ class MelLogMel(nn.Module):
         log_mel = self.to_db(mel)    # (B, n_mels, T)
         # stack as two-channel feature
         return torch.stack([mel, log_mel], dim=1)
+    
+
+from .model import ALMTokenizer
+from encodec.msstftd import MultiScaleSTFTDiscriminator
+
+def load_model_from_config(cfg):
+
+    device = torch.device(cfg["device"])
+
+    cfg_model = cfg["model"]
+    encoder_args      = cfg_model["encoder_args"]
+    decoder_args      = cfg_model["decoder_args"]
+    mae_decoder_args  = cfg_model["mae_args"]
+    patchify_args     = cfg_model["patchify_args"]
+    unpatchify_args   = cfg_model["unpatchify_args"]
+
+    model = ALMTokenizer(
+        device           = device,
+        from_raw_audio   = True,
+        encoder_args     = encoder_args,
+        decoder_args     = decoder_args,
+        mae_decoder_args = mae_decoder_args,
+        patchify_args    = patchify_args,
+        unpatchify_args  = unpatchify_args,
+        window_size      = cfg["model"]["window_size"],
+    ).to(device)
+
+    return model
+
+def load_discriminators_from_config(cfg):
+
+    device = torch.device(cfg["device"])
+
+    cfg_disc = cfg["discriminator"]
+    hop_lengths = cfg_disc["hop_lengths"]
+    n_fft = cfg_disc["n_fft"]
+    win_lengths = cfg_disc["win_lengths"]
+    filters = cfg_disc["filters"]
+    filters_scale = cfg_disc["filters_scale"]
+    dilations = cfg_disc["dilations"]
+    max_filters = cfg_disc["max_filters"]
+
+    discriminators = MultiScaleSTFTDiscriminator(
+        filters=filters,
+        filters_scale=filters_scale,
+        max_filters=max_filters,
+        n_ffts=n_fft,
+        hop_lengths=hop_lengths,
+        win_lengths=win_lengths,
+        dilations=dilations,
+    ).to(device)
+
+    return discriminators
