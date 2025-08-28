@@ -7,7 +7,7 @@ if __name__ == "__main__":
     import os
 
     # config_path = "checkpoints/smallmodelmediumdisc/config_medium.yaml"
-    config_path = "config_medium.yaml"
+    config_path = "config.yaml"
 
 
     # Load the YAML
