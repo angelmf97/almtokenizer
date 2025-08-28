@@ -8,14 +8,22 @@ device: &device cuda
 model:
   from_raw_audio: true
   
-  window_size: 6 # does not matter for training, since it is randomly selected to ensure generalization
+  window_size: 3 # does not matter for training, since it is randomly selected to ensure generalization
 
   # common args for both encoder & decoder
-  base_args:
+  encoder_args:
     embed_dim: 128  # common embedding dimension for EnCodec: 128
-    n_heads: 64
-    n_layers: 24
+    n_heads: 32
+    n_layers: 12
+    dim_feedforward: 256
+    sliding_window_size: 16
+
+  decoder_args:
+    embed_dim: 128  # common embedding dimension for EnCodec: 128
+    n_heads: 32
+    n_layers: 12
     dim_feedforward: 512
+    sliding_window_size: 16
 
   mae_args:
     embed_dim: 128 # common embedding dimension for EnCodec: 128
@@ -38,23 +46,25 @@ model:
 ###################################
 
 discriminator:
-  hop_lengths: [32, 64, 128, 256, 512, 1024]
-  n_fft: [128, 256, 512, 1024, 2048, 2048]
-  win_lengths: [128, 256, 512, 1024, 2048, 2048]
-  n_mels: 64
-
+  hop_lengths: [64, 128, 256, 512]
+  n_fft: [256, 512, 1024, 2048]
+  win_lengths: [256, 512, 1024, 2048]
+  filters: 32
+  filters_scale: 1
+  max_filters: 256
+  dilations: [1, 2, 4]
 
 ################################
 ### DATALOADER CONFIGURATION ###
 ################################
-
+  
 dataloader:
-  dataset_path: ""  # PATH TO THE DATASET DIRECTORY
+  dataset_path: "../4060432"  # PATH TO THE DATASET DIRECTORY
   batch_size: 64
   train_subset_size: null # set to null to use the full dataset
   test_subset_size: null # set to null to use the full dataset
-  num_workers: 4
-  nsecs: 5.0 # desired length of the audios (in seconds) for trimming and padding audio samples
+  num_workers: 0
+  nsecs: 1.0 # desired length of the audios (in seconds) for trimming and padding audio samples
   shuffle: true
 
 ##############################
@@ -62,18 +72,19 @@ dataloader:
 ##############################
 
 training:
-  num_epochs: 1000
-  discriminator_train_freq: 5
-  checkpoint_freq: 10
-  eval_freq: 5
-  start_checkpoint: 0
-  writer_dir: runs/base_model
-  checkpoint_dir: checkpoints/base_model
+  num_epochs: 10000
+  discriminator_train_freq: 1
+  d_train_prob: 0.3333
+  checkpoint_freq: 2
+  eval_freq: 2
+  start_checkpoint: null
+  writer_dir: runs/final_model
+  checkpoint_dir: checkpoints/final_model
 
   lr_generator: 1.0e-4
   weight_decay: 1.0e-5
 
-  lr_discriminator: 1.0e-5
+  lr_discriminator: 1.0e-4
   betas: [0.5, 0.9]
 
   lambdas :
