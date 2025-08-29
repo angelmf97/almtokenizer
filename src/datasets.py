@@ -311,6 +311,7 @@ class GoodSoundsDataset(Dataset):
                s.klass,
                s.sustain,
                s.release,
+               s.decay,
                t.filename
         FROM sounds s
         JOIN takes t ON s.id = t.sound_id
@@ -339,7 +340,8 @@ class GoodSoundsDataset(Dataset):
                 'klass': row['klass'],
                 'file_path': file_path,
                 'sustain': row['sustain'],
-                'release': row['release']
+                'release': row['release'],
+                'decay': row['decay']
             })
 
     def __len__(self) -> int:
@@ -377,7 +379,8 @@ class GoodSoundsDataset(Dataset):
             'take_id': record['take_id'],
             'klass': record['klass'],
             'sustain': record['sustain'],
-            'release': record['release']
+            'release': record['release'],
+            'decay': record['decay']
 
         }
     
