@@ -72,24 +72,24 @@ dataloader:
 ##############################
 
 training:
-  num_epochs: 10000
+  num_epochs: 1000
   discriminator_train_freq: 1
   d_train_prob: 0.3333
-  checkpoint_freq: 2
+  checkpoint_freq: 20
   eval_freq: 2
   start_checkpoint: null
-  writer_dir: runs/final_model
-  checkpoint_dir: checkpoints/final_model
+  writer_dir: runs/final_model2
+  checkpoint_dir: checkpoints/final_model2
 
   lr_generator: 1.0e-4
   weight_decay: 1.0e-5
 
-  lr_discriminator: 1.0e-4
+  lr_discriminator: 1.0e-5
   betas: [0.5, 0.9]
 
   lambdas :
     L_time: 1.0
-    L_freq: 1.0
+    L_freq: 2.0
     L_adv: 1.0
     L_feat: 1.0
     L_mae: 0.1
