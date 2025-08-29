@@ -388,7 +388,6 @@ class ALMTokenizer(nn.Module):
                             "epoch": epoch},
                             os.path.join(model_dir, f"epoch_{epoch + start_checkpoint}.pth"))
                 #torch.save(discriminators.state_dict(), os.path.join(discriminator_dir, f"epoch_{epoch + start_checkpoint}.pth"))
-                print(f"Model saved at epoch {epoch + start_checkpoint}")    
 
             # Log average losses to TensorBoard
             for loss_type, loss_value in losses.items():
@@ -402,7 +401,6 @@ class ALMTokenizer(nn.Module):
                 writer.add_scalar(f"train/{loss_type}", losses[loss_type], epoch + start_checkpoint)
             
             max_memory = torch.cuda.max_memory_allocated(self.device) / (1024 ** 2)  # in MB
-            print(f"Epoch {epoch + start_checkpoint}: Max GPU memory used = {max_memory:.2f} MB")
             
             # Free up GPU memory
             torch.cuda.empty_cache()            
