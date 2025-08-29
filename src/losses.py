@@ -28,10 +28,10 @@ def MultiScaleSpectrogramLoss(x_hat, x, scales=range(5, 12), alpha_per_scale=Non
     losses = []
     for i in scales:
         n = 2 ** i
-        S = torchaudio.transforms.MelSpectrogram(
-            n_mels=64,
-            sample_rate=24000,
-            n_fft=n,
+        S = torchaudio.transforms.Spectrogram(
+            # n_mels=64,
+            # sample_rate=24000,
+            n_fft=max(n, 512),
             window_fn=torch.hann_window,
             win_length=n,
             hop_length=n // 4,
