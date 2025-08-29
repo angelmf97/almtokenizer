@@ -1,5 +1,7 @@
 # almtokenizer
 
+This repository aims to reproduce the results of the paper ["ALMTokenizer: A Low-bitrate and Semantic-rich Audio Codec Tokenizer for Audio Language Modeling"](https://arxiv.org/abs/2504.10344). This work introduces a new way of compressing audio into discrete tokens that are both low-bitrate and semantically rich, making them more suitable for audio language modeling tasks such as text-to-speech, audio captioning, or music generation.
+
 
 ### Quick setup
 
@@ -62,3 +64,131 @@ training:
     lambdas: factors multiplying each term of the compound loss function of the generator.
 
 ```
+
+### Sound Reconstruction Examples
+<table>
+  <tr>
+    <td>    
+        <p>Original:</p>
+        <audio controls src="audio/speech-female.wav"></audio>
+    </td>
+    <td>
+        <p>Reconstructed (w=3):</p>
+        <audio controls src="audio/speech-female.wav"></audio>
+    </td>
+    <td>
+        <p>Reconstructed (w=6):</p>
+        <audio controls src="audio/speech-female.wav"></audio>
+    </td>  
+    <td>
+        <p>Reconstructed (w=10):</p>
+        <audio controls src="audio/speech-female.wav"></audio>
+    </td>  
+  </tr>
+</table>
+
+
+### Sound Space Traversals
+
+<table>
+    <tr>
+        <p>From bass A3 to clarinet A6:</p>
+        <td>    
+            <p>EnCodec:</p>
+            <audio controls src="EnCodec_trajectory_0.wav"></audio>
+        </td>
+        <td>
+            <p>ALMTokenizer:</p>
+            <audio controls src="ALMTokenizer_trajectory_0.wav"></audio>
+        </td>  
+    </tr>
+    <tr>
+        <p>From bass A3 to clarinet A6:</p>
+        <td>    
+            <p>EnCodec:</p>
+            <audio controls src="EnCodec_trajectory_1.wav"></audio>
+        </td>
+        <td>
+            <p>ALMTokenizer:</p>
+            <audio controls src="ALMTokenizer_trajectory_1.wav"></audio>
+        </td>  
+    </tr>
+    <tr>
+        <p>From bass A3 to clarinet A6:</p>
+        <td>    
+            <p>EnCodec:</p>
+            <audio controls src="EnCodec_trajectory_2.wav"></audio>
+        </td>
+        <td>
+            <p>ALMTokenizer:</p>
+            <audio controls src="ALMTokenizer_trajectory_2.wav"></audio>
+        </td>  
+    </tr>
+</table>
+
+
+### Zero-shot Timbre Transfer
+
+In the following examples, we test whether we can change the timbre of a sound (its instrument-like quality) while keeping the pitch and rhythm intact.
+
+The idea is simple:
+
+1. We encode an input sound into latent representations using both EnCodec and ALMTokenizer.
+
+2. For each instrument in the Good-sounds dataset, we compute an “average point” in latent space (a centroid).
+
+3. To transform a sound, we take its latent representation and shift it toward the centroid of a target instrument.
+
+4. Finally, we decode the shifted representation back into audio.
+
+These examples show that while reconstruction quality is still limited, ALMTokenizer's latent space captures semantic structure more clearly. This makes the timbre transfer feel more intentional than with EnCodec, even if the results are far from perfect.
+
+<table>
+    <tr>
+        <p>Female speech to cello:</p>
+        <td>    
+            <p>EnCodec before transfer:</p>
+            <audio controls src="before_encodec_1.wav"></audio>
+        </td>
+        <td>
+            <p>Encodec after transfer:</p>
+            <audio controls src="after_encodec_1.wav"></audio>
+        </td>
+    </tr>
+    <tr>
+        <td>    
+            <p>ALMTokenizer before transfer:</p>
+            <audio controls src="before_encodec_1.wav"></audio>
+        </td>
+        <td>
+            <p>ALMTokenizer after transfer:</p>
+            <audio controls src="after_encodec_1.wav"></audio>
+        </td>  
+    </tr>
+</table>
+<table>
+    <tr>
+        <p>Male speech to cello:</p>
+        <td>    
+            <p>EnCodec before transfer:</p>
+            <audio controls src="before_encodec_.wav"></audio>
+        </td>
+        <td>
+            <p>Encodec after transfer:</p>
+            <audio controls src="after_encodec_.wav"></audio>
+        </td>
+    </tr>
+    <tr>
+        <td>    
+            <p>ALMTokenizer before transfer:</p>
+            <audio controls src="before_encodec_.wav"></audio>
+        </td>
+        <td>
+            <p>ALMTokenizer after transfer:</p>
+            <audio controls src="after_encodec_.wav"></audio>
+        </td>  
+    </tr>
+</table>
+
+
+
