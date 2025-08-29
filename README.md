@@ -95,33 +95,33 @@ training:
         <p>From bass A3 to clarinet A6:</p>
         <td>    
             <p>EnCodec:</p>
-            <audio controls src="EnCodec_trajectory_0.wav"></audio>
+            <audio controls src="audio/EnCodec_trajectory_0.wav"></audio>
         </td>
         <td>
             <p>ALMTokenizer:</p>
-            <audio controls src="ALMTokenizer_trajectory_0.wav"></audio>
+            <audio controls src="audio/ALMTokenizer_trajectory_0.wav"></audio>
         </td>  
     </tr>
     <tr>
         <p>From bass A3 to clarinet A6:</p>
         <td>    
             <p>EnCodec:</p>
-            <audio controls src="EnCodec_trajectory_1.wav"></audio>
+            <audio controls src="audio/EnCodec_trajectory_1.wav"></audio>
         </td>
         <td>
             <p>ALMTokenizer:</p>
-            <audio controls src="ALMTokenizer_trajectory_1.wav"></audio>
+            <audio controls src="audio/ALMTokenizer_trajectory_1.wav"></audio>
         </td>  
     </tr>
     <tr>
         <p>From bass A3 to clarinet A6:</p>
         <td>    
             <p>EnCodec:</p>
-            <audio controls src="EnCodec_trajectory_2.wav"></audio>
+            <audio controls src="audio/EnCodec_trajectory_2.wav"></audio>
         </td>
         <td>
             <p>ALMTokenizer:</p>
-            <audio controls src="ALMTokenizer_trajectory_2.wav"></audio>
+            <audio controls src="audio/ALMTokenizer_trajectory_2.wav"></audio>
         </td>  
     </tr>
 </table>
@@ -144,51 +144,49 @@ The idea is simple:
 These examples show that while reconstruction quality is still limited, ALMTokenizer's latent space captures semantic structure more clearly. This makes the timbre transfer feel more intentional than with EnCodec, even if the results are far from perfect.
 
 <table>
-    <tr>
-        <p>Female speech to cello:</p>
-        <td>    
-            <p>EnCodec before transfer:</p>
-            <audio controls src="before_encodec_1.wav"></audio>
-        </td>
-        <td>
-            <p>Encodec after transfer:</p>
-            <audio controls src="after_encodec_1.wav"></audio>
-        </td>
-    </tr>
-    <tr>
-        <td>    
-            <p>ALMTokenizer before transfer:</p>
-            <audio controls src="before_encodec_1.wav"></audio>
-        </td>
-        <td>
-            <p>ALMTokenizer after transfer:</p>
-            <audio controls src="after_encodec_1.wav"></audio>
-        </td>  
-    </tr>
+  <tr>
+    <td colspan="2"><p>From bass A3 to clarinet A6:</p></td>
+  </tr>
+  <tr>
+    <td>
+      <p>EnCodec:</p>
+      <audio controls src="audio/EnCodec_trajectory_0.wav?raw=1"></audio>
+    </td>
+    <td>
+      <p>ALMTokenizer:</p>
+      <audio controls src="audio/ALMTokenizer_trajectory_0.wav?raw=1"></audio>
+    </td>
+  </tr>
+
+  <tr>
+    <td colspan="2"><p>From bass A3 to clarinet A6:</p></td>
+  </tr>
+  <tr>
+    <td>
+      <p>EnCodec:</p>
+      <audio controls src="audio/EnCodec_trajectory_1.wav?raw=1"></audio>
+    </td>
+    <td>
+      <p>ALMTokenizer:</p>
+      <audio controls src="audio/ALMTokenizer_trajectory_1.wav?raw=1"></audio>
+    </td>
+  </tr>
+
+  <tr>
+    <td colspan="2"><p>From bass A3 to clarinet A6:</p></td>
+  </tr>
+  <tr>
+    <td>
+      <p>EnCodec:</p>
+      <audio controls src="audio/EnCodec_trajectory_2.wav?raw=1"></audio>
+    </td>
+    <td>
+      <p>ALMTokenizer:</p>
+      <audio controls src="audio/ALMTokenizer_trajectory_2.wav?raw=1"></audio>
+    </td>
+  </tr>
 </table>
-<table>
-    <tr>
-        <p>Male speech to cello:</p>
-        <td>    
-            <p>EnCodec before transfer:</p>
-            <audio controls src="before_encodec_.wav"></audio>
-        </td>
-        <td>
-            <p>Encodec after transfer:</p>
-            <audio controls src="after_encodec_.wav"></audio>
-        </td>
-    </tr>
-    <tr>
-        <td>    
-            <p>ALMTokenizer before transfer:</p>
-            <audio controls src="before_encodec_.wav"></audio>
-        </td>
-        <td>
-            <p>ALMTokenizer after transfer:</p>
-            <audio controls src="after_encodec_.wav"></audio>
-        </td>  
-    </tr>
-</table>
+
 
 
 
