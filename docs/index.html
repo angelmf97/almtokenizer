@@ -9,7 +9,7 @@
     pre { background: #f4f4f4; padding: 12px; border-radius: 4px; overflow-x: auto; }
     code { font-family: monospace; }
     table { border-collapse: collapse; margin: 20px 0; width: 100%; }
-    td, th { border: 1px solid #ddd; padding: 12px; vertical-align: top; }
+    /* td, th { border: 1px solid #ddd; padding: 12px; vertical-align: top; } */
     audio { width: 100%; margin-top: 6px; }
   </style>
 </head>
@@ -24,71 +24,11 @@ This work introduces a new way of compressing audio into discrete tokens that ar
 making them more suitable for audio language modeling tasks such as text-to-speech, audio captioning, or music generation.
 </p>
 
-<h3>Quick setup</h3>
-<p>Create and activate the conda environment using the following command:</p>
-<pre><code>conda env create -f environment.yml
-conda activate almtokenizer
-</code></pre>
-
-<p>
-This environment uses python 3.10, torch 2.6.0 and CUDA toolkit 11.8 (a different version of CUDA toolkit may be needed depending on the machine).
-</p>
-
-<h3>Training</h3>
-<p>
-A config file is provided in <code>config.yaml</code> to facilitate defining and tracking the parameters of several configurations. 
-Choose the desired parameters and run the <code>training.ipynb</code> notebook. 
-The training process can then be monitored by running:
-</p>
-<pre><code>tensorboard --logdir runs/base_model    # Default directory, can be changed in the config
-</code></pre>
-
-<p>
-The "scalars" tab allows monitoring of the training and evaluation losses, 
-and the "audio" tab allows listening to a few pairs of original vs. reconstructed audios.
-</p>
-
-<p><b>Important:</b> Please make sure you have a copy of the FSD50K dataset and the path to the root directory of the dataset is correctly specified in the config file under <code>dataloader/dataset_path</code>.</p>
-
-<p>
-The window size (separation between CLS tokens) changes randomly for each batch, in a range between 2 and 10, so the model generalizes better for different values of window size.
-</p>
-
-<p>Most important parameters to check in the config:</p>
-<pre><code>model:
-    base_args:
-        n_heads: number of attention heads of the transformer encoder and decoder.
-        n_layers: number of transformer layers of the transformer encoder and decoder.
-
-    mae_args:
-        n_heads: similar to base_args, but for the MAE decoder.
-        n_layers: similar to base_args, but for the MAE decoder.
-
-discriminator:
-    hop_lengths, n_fft, win_lengths: must be defined as lists.
-    n_mels: number of mel filters.
-
-dataloader:
-    dataset_path: path to the root directory of FSD50K dataset.
-    batch_size
-    train_subset_size
-    test_subset_size
-    nsecs: desired audio length (e.g. 5 seconds).
-
-training:
-    num_epochs
-    discriminator_train_freq
-    checkpoint_freq
-    eval_freq
-    start_checkpoint
-    writer_dir
-    checkpoint_dir
-    lr_generator
-    lr_discriminator
-    lambdas
-</code></pre>
 
 <h3>Sound Reconstruction Examples</h3>
+
+Here we present some examples of sound reconstruction using the ALMTokenizer. The model allows bitrate on demand by changing the window size (w), which controls the rate at which [CLS] tokens are interleaved. A higher w results in a more compressed audio, which can lead to a loss of detail but also reduces the overall bitrate. The examples show the reconstruction of a sound with windows of size 3, 6 and 10. All three reconstruction have been produced with the same model, no need to retrain for each bitrate.
+
 <table>
   <tr>
     <td>
@@ -111,15 +51,25 @@ training:
 </table>
 
 <h3>Sound Space Traversals</h3>
+
+<p>In the following examples, we showcase the results of our interpolation smoothness tests. Each sequence begins with a sound from one instrument and gradually transforms into another as we interpolate between their latent representations. Ideally, these transitions should feel continuous, with the timbre evolving naturally rather than changing abruptly. While the evaluation is ultimately subjective, these samples provide a direct way to hear how well the latent space of ALMTokenizer captures meaningful and coherent trajectories compared to EnCodec.</p>
+
+<p>From flute C5 to flute E5 to flute G5:</p>
 <table>
   <tr>
     <td><p>EnCodec:</p><audio controls src="audio/EnCodec_trajectory_0.wav"></audio></td>
     <td><p>ALMTokenizer:</p><audio controls src="audio/ALMTokenizer_trajectory_0.wav"></audio></td>
   </tr>
+</table>
+<p>From clarinet G5 to trumpet G5:</p>
+<table>
   <tr>
     <td><p>EnCodec:</p><audio controls src="audio/EnCodec_trajectory_1.wav"></audio></td>
     <td><p>ALMTokenizer:</p><audio controls src="audio/ALMTokenizer_trajectory_1.wav"></audio></td>
   </tr>
+</table>
+<p>From cello A3 to flute A6:</p>
+<table>
   <tr>
     <td><p>EnCodec:</p><audio controls src="audio/EnCodec_trajectory_2.wav"></audio></td>
     <td><p>ALMTokenizer:</p><audio controls src="audio/ALMTokenizer_trajectory_2.wav"></audio></td>
@@ -144,7 +94,7 @@ These examples show that while reconstruction quality is still limited, ALMToken
 This makes the timbre transfer feel more intentional than with EnCodec, even if the results are far from perfect.
 </p>
 
-<h4> Male speech to cello </h4>
+<h4> Male speech to trumpet (note A, any octave) </h4>
 
 <table>
     <tr>
@@ -165,7 +115,7 @@ This makes the timbre transfer feel more intentional than with EnCodec, even if 
     </tr>
 </table>
 
-<h4> Female speech to cello </h4>
+<h4> Female speech to trumpet (note A, any octave) </h4>
 
 <table>
     <tr>
