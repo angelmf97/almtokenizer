@@ -104,7 +104,7 @@ class ALMTokenizer(nn.Module):
         dec_out = self.query_decoder(cls_and_mask)  # (B, T + n_cls, D)
         
         # One CLS token per window, so we can retrieve CLS tokens
-        cls_positions = torch.tensor([(i + 1) * (self.window_size + 1) - 1 for i in range(h.size(1) // (self.window_size + 1))], device=h.device).long()
+        cls_positions = torch.tensor([(i + 1) * (self.window_size + 1) - 1 for i in range(h.size(1))], device=h.device).long()
 
         # Remove CLS tokens
         _, dec_out = retrieve_cls_tokens(dec_out, cls_positions=cls_positions)  # (B, T, D)
