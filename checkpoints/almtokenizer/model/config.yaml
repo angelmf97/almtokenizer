@@ -1,0 +1,95 @@
+# top‑level device; e.g. "cuda" or "cpu"
+device: &device cuda
+
+###########################
+### MODEL CONFIGURATION ###
+###########################
+
+model:
+  from_raw_audio: true
+  
+  window_size: 3 # does not matter for training, since it is randomly selected to ensure generalization
+
+  # common args for both encoder & decoder
+  encoder_args:
+    embed_dim: 128  # common embedding dimension for EnCodec: 128
+    n_heads: 32
+    n_layers: 12
+    dim_feedforward: 256
+    sliding_window_size: 16
+
+  decoder_args:
+    embed_dim: 128  # common embedding dimension for EnCodec: 128
+    n_heads: 32
+    n_layers: 12
+    dim_feedforward: 512
+    sliding_window_size: 16
+
+  mae_args:
+    embed_dim: 128 # common embedding dimension for EnCodec: 128
+    n_heads: 8
+    n_layers: 6
+    dim_feedforward: 512
+
+  # if you want to freeze patchify/unpatchify
+  patchify_args:
+    requires_grad: false
+    device: *device
+  
+  unpatchify_args:
+    requires_grad: false
+    device: *device
+
+
+###################################
+### DISCRIMINATOR CONFIGURATION ###
+###################################
+
+discriminator:
+  hop_lengths: [64, 128, 256, 512]
+  n_fft: [256, 512, 1024, 2048]
+  win_lengths: [256, 512, 1024, 2048]
+  filters: 32
+  filters_scale: 1
+  max_filters: 256
+  dilations: [1, 2, 4]
+
+################################
+### DATALOADER CONFIGURATION ###
+################################
+  
+dataloader:
+  dataset_path: "../4060432"  # PATH TO THE DATASET DIRECTORY
+  batch_size: 30
+  train_subset_size: null # set to null to use the full dataset
+  test_subset_size: null # set to null to use the full dataset
+  num_workers: 0
+  nsecs: 0.5 # desired length of the audios (in seconds) for trimming and padding audio samples
+  shuffle: true
+
+##############################
+### TRAINING CONFIGURATION ###
+##############################
+
+training:
+  num_epochs: 1000
+  discriminator_train_freq: 1
+  d_train_prob: 0.3333
+  checkpoint_freq: 2
+  eval_freq: 2
+  start_checkpoint: 72
+  writer_dir: runs/final_model2
+  checkpoint_dir: checkpoints/final_model2
+
+  lr_generator: 1.0e-4
+  weight_decay: 1.0e-5
+
+  lr_discriminator: 1.0e-5
+  betas: [0.5, 0.9]
+
+  lambdas :
+    L_time: 1.0
+    L_freq: 2.0
+    L_adv: 1.0
+    L_feat: 1.0
+    L_mae: 0.1
