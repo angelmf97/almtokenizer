@@ -1,4 +1,6 @@
-# almtokenizer
+# ALMTokenizer - Custom Implementation
+
+⚠️ This is an unofficial implementation of ALMTokenizer. It is not affiliated with the original authors.
 
 This repository aims to reproduce the results of the paper ["ALMTokenizer: A Low-bitrate and Semantic-rich Audio Codec Tokenizer for Audio Language Modeling"](https://arxiv.org/abs/2504.10344). This work introduces a new way of compressing audio into discrete tokens that are both low-bitrate and semantically rich, making them more suitable for audio language modeling tasks such as text-to-speech, audio captioning, or music generation.
 
